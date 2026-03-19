@@ -1,318 +1,218 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 
 interface AssemblyGameProps {
   onComplete: (score: number) => void;
 }
 
-// --- Tetris Constants ---
-const COLS = 10;
-const ROWS = 20;
-const GOAL_LINES = 10;
+// 딱따구리 직소퍼즐 - 4x4 = 16 조각
+const GRID = 4;
+const TOTAL = GRID * GRID;
 
-// 7 standard tetrominoes - each shape is array of [row,col] offsets
-const SHAPES: number[][][] = [
-  // I
-  [[0,0],[0,1],[0,2],[0,3]],
-  // O
-  [[0,0],[0,1],[1,0],[1,1]],
-  // T
-  [[0,0],[0,1],[0,2],[1,1]],
-  // S
-  [[0,1],[0,2],[1,0],[1,1]],
-  // Z
-  [[0,0],[0,1],[1,1],[1,2]],
-  // L
-  [[0,0],[0,1],[0,2],[1,0]],
-  // J
-  [[0,0],[0,1],[0,2],[1,2]],
+interface PuzzlePiece {
+  id: number;        // 원래 위치 (정답)
+  current: number;   // 현재 위치
+  locked: boolean;   // 맞춰졌는지
+}
+
+// 딱따구리 부품 색상 맵 (4x4 그리드에서 각 조각의 색상)
+const PIECE_COLORS: string[][] = [
+  ["#87CEEB", "#87CEEB", "#87CEEB", "#87CEEB"], // 하늘
+  ["#87CEEB", "#DC143C", "#DC143C", "#87CEEB"], // 머리
+  ["#87CEEB", "#DC143C", "#FFD700", "#87CEEB"], // 머리+부리
+  ["#654321", "#8B4513", "#8B4513", "#654321"], // 날개+몸통
 ];
 
-// 나무 공방 테마 컬러
-const SHAPE_COLORS = [
-  "#4ECDC4", // I - 청록
-  "#FFD93D", // O - 노랑
-  "#C084FC", // T - 보라
-  "#6BCB77", // S - 초록
-  "#FF6B6B", // Z - 빨강
-  "#FF8C42", // L - 주황
-  "#60A5FA", // J - 파랑
+// 딱따구리 부위 이모지/라벨
+const PIECE_LABELS: string[][] = [
+  ["☁️", "🌤️", "☁️", "🌤️"],
+  ["🌿", "🔴", "🔴", "🌿"],
+  ["🌿", "🟤", "📐", "🌿"],
+  ["🍂", "🪵", "🪵", "🍂"],
 ];
 
-type Grid = (number | null)[][]; // null = empty, number = color index
+function shufflePieces(): PuzzlePiece[] {
+  const pieces: PuzzlePiece[] = Array.from({ length: TOTAL }, (_, i) => ({
+    id: i,
+    current: i,
+    locked: false,
+  }));
 
-interface Piece {
-  shape: number[][]; // [row,col] offsets
-  colorIdx: number;
-  row: number;
-  col: number;
-}
-
-function createEmptyGrid(): Grid {
-  return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
-}
-
-function randomPiece(): Piece {
-  const idx = Math.floor(Math.random() * SHAPES.length);
-  return {
-    shape: SHAPES[idx].map((c) => [...c]),
-    colorIdx: idx,
-    row: 0,
-    col: Math.floor(COLS / 2) - 1,
-  };
-}
-
-function rotateCW(shape: number[][]): number[][] {
-  const maxR = Math.max(...shape.map((s) => s[0]));
-  const maxC = Math.max(...shape.map((s) => s[1]));
-  // 90° CW: (r,c) -> (c, maxR - r)
-  return shape.map(([r, c]) => [c, maxR - r]);
-}
-
-function isValid(grid: Grid, piece: Piece): boolean {
-  for (const [dr, dc] of piece.shape) {
-    const r = piece.row + dr;
-    const c = piece.col + dc;
-    if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return false;
-    if (grid[r][c] !== null) return false;
+  // Fisher-Yates 셔플 (solvable하게)
+  for (let i = TOTAL - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = pieces[i].current;
+    pieces[i].current = pieces[j].current;
+    pieces[j].current = tmp;
   }
-  return true;
+
+  // 이미 맞춰진 건 잠금
+  pieces.forEach((p) => {
+    if (p.current === p.id) p.locked = true;
+  });
+
+  return pieces;
 }
 
-function placePiece(grid: Grid, piece: Piece): Grid {
-  const newGrid = grid.map((row) => [...row]);
-  for (const [dr, dc] of piece.shape) {
-    const r = piece.row + dr;
-    const c = piece.col + dc;
-    if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
-      newGrid[r][c] = piece.colorIdx;
-    }
-  }
-  return newGrid;
+// 사운드
+function playSwapSound() {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.value = 600;
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.1);
+  } catch {}
 }
 
-function clearLines(grid: Grid): { newGrid: Grid; cleared: number } {
-  const kept = grid.filter((row) => row.some((cell) => cell === null));
-  const cleared = ROWS - kept.length;
-  const empty = Array.from({ length: cleared }, () =>
-    Array(COLS).fill(null)
-  );
-  return { newGrid: [...empty, ...kept], cleared };
+function playLockSound() {
+  try {
+    const ctx = new AudioContext();
+    [523, 659, 784].forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.value = f;
+      gain.gain.setValueAtTime(0.12, ctx.currentTime + i * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.08 + 0.15);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.08);
+      osc.stop(ctx.currentTime + i * 0.08 + 0.15);
+    });
+  } catch {}
 }
 
-function getGhostRow(grid: Grid, piece: Piece): number {
-  let ghostRow = piece.row;
-  while (true) {
-    const next = { ...piece, row: ghostRow + 1 };
-    if (!isValid(grid, next)) break;
-    ghostRow++;
-  }
-  return ghostRow;
+function playCompleteSound() {
+  try {
+    const ctx = new AudioContext();
+    [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.value = f;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.06 + 0.2);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.06);
+      osc.stop(ctx.currentTime + i * 0.06 + 0.25);
+    });
+  } catch {}
 }
-
-type Phase = "ready" | "playing" | "clearing" | "gameover" | "complete";
 
 export function AssemblyGame({ onComplete }: AssemblyGameProps) {
-  const [phase, setPhase] = useState<Phase>("ready");
-  const [grid, setGrid] = useState<Grid>(createEmptyGrid);
-  const [current, setCurrent] = useState<Piece>(randomPiece);
-  const [next, setNext] = useState<Piece>(randomPiece);
-  const [linesCleared, setLinesCleared] = useState(0);
-  const [score, setScore] = useState(0);
-  const [combo, setCombo] = useState(0);
-  const [piecesUsed, setPiecesUsed] = useState(0);
-  const [clearEffect, setClearEffect] = useState<number[]>([]); // rows being cleared
-  const [level, setLevel] = useState(1);
+  const [phase, setPhase] = useState<"ready" | "playing" | "complete">("ready");
+  const [pieces, setPieces] = useState<PuzzlePiece[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [moves, setMoves] = useState(0);
+  const [timer, setTimer] = useState(0);
+  const [justLocked, setJustLocked] = useState<number[]>([]);
+  const [hintShown, setHintShown] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval>>();
+  const startTimeRef = useRef(0);
 
-  const intervalRef = useRef<ReturnType<typeof setInterval>>();
-  const gridRef = useRef(grid);
-  const currentRef = useRef(current);
-  const phaseRef = useRef(phase);
-  const linesClearedRef = useRef(linesCleared);
-
-  gridRef.current = grid;
-  currentRef.current = current;
-  phaseRef.current = phase;
-  linesClearedRef.current = linesCleared;
-
-  // Gravity drop
-  useEffect(() => {
-    if (phase !== "playing") return;
-    const speed = Math.max(150, 600 - (level - 1) * 80);
-    intervalRef.current = setInterval(() => {
-      moveDown();
-    }, speed);
-    return () => clearInterval(intervalRef.current);
-  }, [phase, level]);
-
-  const spawnNext = useCallback(() => {
-    const np = next;
-    const nn = randomPiece();
-    if (!isValid(gridRef.current, np)) {
-      // Game over - 다시 시작해야 함
-      setPhase("gameover");
-      return;
-    }
-    setCurrent(np);
-    setNext(nn);
-    setPiecesUsed((p) => p + 1);
-  }, [next]);
-
-  const lockPiece = useCallback(() => {
-    const newGrid = placePiece(gridRef.current, currentRef.current);
-    const { newGrid: clearedGrid, cleared } = clearLines(newGrid);
-
-    if (cleared > 0) {
-      // Find which rows were cleared for effect
-      const clearedRows: number[] = [];
-      newGrid.forEach((row, i) => {
-        if (row.every((cell) => cell !== null)) clearedRows.push(i);
-      });
-      setClearEffect(clearedRows);
-
-      // Points: 1=100, 2=300, 3=500, 4=800
-      const lineScores = [0, 100, 300, 500, 800];
-      const points = (lineScores[cleared] || cleared * 200) * level;
-      setScore((s) => s + points);
-      setCombo((c) => c + 1);
-
-      const newTotal = linesClearedRef.current + cleared;
-      setLinesCleared(newTotal);
-      setLevel(Math.floor(newTotal / 3) + 1);
-
-      // Clear animation then update
-      setPhase("clearing");
-      setTimeout(() => {
-        setClearEffect([]);
-        setGrid(clearedGrid);
-        if (newTotal >= GOAL_LINES) {
-          setPhase("complete");
-          // Score: base from lines + efficiency bonus
-          const efficiency = Math.max(0, 100 - piecesUsed);
-          const finalScore = Math.min(100, Math.round(60 + efficiency * 0.4));
-          setTimeout(() => onComplete(finalScore), 2000);
-        } else {
-          setPhase("playing");
-          spawnNext();
-        }
-      }, 300);
-    } else {
-      setGrid(newGrid);
-      setCombo(0);
-      spawnNext();
-    }
-  }, [spawnNext, level, piecesUsed, onComplete]);
-
-  const moveDown = useCallback(() => {
-    if (phaseRef.current !== "playing") return;
-    const moved = { ...currentRef.current, row: currentRef.current.row + 1 };
-    if (isValid(gridRef.current, moved)) {
-      setCurrent(moved);
-    } else {
-      lockPiece();
-    }
-  }, [lockPiece]);
-
-  const moveLeft = useCallback(() => {
-    if (phase !== "playing") return;
-    const moved = { ...current, col: current.col - 1 };
-    if (isValid(grid, moved)) setCurrent(moved);
-  }, [phase, current, grid]);
-
-  const moveRight = useCallback(() => {
-    if (phase !== "playing") return;
-    const moved = { ...current, col: current.col + 1 };
-    if (isValid(grid, moved)) setCurrent(moved);
-  }, [phase, current, grid]);
-
-  const rotate = useCallback(() => {
-    if (phase !== "playing") return;
-    const rotated = { ...current, shape: rotateCW(current.shape) };
-    // Wall kick: try original, then left, then right
-    if (isValid(grid, rotated)) {
-      setCurrent(rotated);
-    } else if (isValid(grid, { ...rotated, col: rotated.col - 1 })) {
-      setCurrent({ ...rotated, col: rotated.col - 1 });
-    } else if (isValid(grid, { ...rotated, col: rotated.col + 1 })) {
-      setCurrent({ ...rotated, col: rotated.col + 1 });
-    }
-  }, [phase, current, grid]);
-
-  const hardDrop = useCallback(() => {
-    if (phase !== "playing") return;
-    const ghostRow = getGhostRow(grid, current);
-    const dropped = { ...current, row: ghostRow };
-    setCurrent(dropped);
-    // Lock immediately on next tick
-    setTimeout(() => {
-      currentRef.current = dropped;
-      lockPiece();
-    }, 50);
-  }, [phase, grid, current, lockPiece]);
-
-  // Keyboard controls
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (phase !== "playing") return;
-      switch (e.key) {
-        case "ArrowLeft": moveLeft(); break;
-        case "ArrowRight": moveRight(); break;
-        case "ArrowDown": moveDown(); break;
-        case "ArrowUp": rotate(); break;
-        case " ": hardDrop(); e.preventDefault(); break;
-      }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [phase, moveLeft, moveRight, moveDown, rotate, hardDrop]);
+  const lockedCount = pieces.filter((p) => p.locked).length;
+  const progress = (lockedCount / TOTAL) * 100;
 
   const startGame = useCallback(() => {
-    setGrid(createEmptyGrid());
-    const p1 = randomPiece();
-    const p2 = randomPiece();
-    setCurrent(p1);
-    setNext(p2);
-    setLinesCleared(0);
-    setScore(0);
-    setCombo(0);
-    setPiecesUsed(0);
-    setLevel(1);
+    const shuffled = shufflePieces();
+    // 최소 10개는 섞이도록
+    let attempts = 0;
+    let p = shuffled;
+    while (p.filter((x) => x.locked).length > 6 && attempts < 10) {
+      p = shufflePieces();
+      attempts++;
+    }
+    setPieces(p);
+    setSelected(null);
+    setMoves(0);
+    setTimer(0);
     setPhase("playing");
+    startTimeRef.current = Date.now();
+    timerRef.current = setInterval(() => {
+      setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
   }, []);
 
-  // Ghost piece position
-  const ghostRow = phase === "playing" ? getGhostRow(grid, current) : 0;
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
 
-  // Render grid with current piece overlaid
-  const renderGrid = () => {
-    const display: (number | null | "ghost")[][] = grid.map((row) => [...row]);
+  const handlePieceTap = useCallback(
+    (idx: number) => {
+      if (phase !== "playing") return;
+      const piece = pieces.find((p) => p.current === idx);
+      if (!piece || piece.locked) return;
 
-    // Ghost piece
-    if (phase === "playing") {
-      for (const [dr, dc] of current.shape) {
-        const r = ghostRow + dr;
-        const c = current.col + dc;
-        if (r >= 0 && r < ROWS && c >= 0 && c < COLS && display[r][c] === null) {
-          display[r][c] = "ghost" as any;
+      if (selected === null) {
+        setSelected(idx);
+      } else if (selected === idx) {
+        setSelected(null);
+      } else {
+        // Swap
+        const newPieces = pieces.map((p) => {
+          if (p.current === selected) return { ...p, current: idx };
+          if (p.current === idx) return { ...p, current: selected };
+          return p;
+        });
+
+        // Check locks
+        const newlyLocked: number[] = [];
+        const finalPieces = newPieces.map((p) => {
+          if (!p.locked && p.current === p.id) {
+            newlyLocked.push(p.id);
+            return { ...p, locked: true };
+          }
+          return p;
+        });
+
+        setPieces(finalPieces);
+        setSelected(null);
+        setMoves((m) => m + 1);
+
+        if (newlyLocked.length > 0) {
+          playLockSound();
+          setJustLocked(newlyLocked);
+          setTimeout(() => setJustLocked([]), 600);
+        } else {
+          playSwapSound();
+        }
+
+        // Check complete
+        if (finalPieces.every((p) => p.locked)) {
+          clearInterval(timerRef.current);
+          playCompleteSound();
+          setPhase("complete");
+          // Score based on moves and time
+          const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+          const movePenalty = Math.max(0, moves - TOTAL) * 2;
+          const timePenalty = Math.max(0, elapsed - 30);
+          const score = Math.max(30, Math.min(100, 100 - movePenalty - timePenalty));
+          setTimeout(() => onComplete(score), 2500);
         }
       }
-      // Current piece
-      for (const [dr, dc] of current.shape) {
-        const r = current.row + dr;
-        const c = current.col + dc;
-        if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
-          display[r][c] = current.colorIdx;
-        }
-      }
-    }
+    },
+    [phase, pieces, selected, moves, onComplete]
+  );
 
-    return display;
-  };
+  const showHint = useCallback(() => {
+    setHintShown(true);
+    setTimeout(() => setHintShown(false), 2000);
+  }, []);
 
-  const displayGrid = renderGrid();
-
-  // Cell size calculation
-  const cellSize = 100 / COLS; // percentage
+  // 정답 이미지의 위치에서 조각 가져오기
+  const getPieceAt = (pos: number) => pieces.find((p) => p.current === pos);
+  const getRow = (pos: number) => Math.floor(pos / GRID);
+  const getCol = (pos: number) => pos % GRID;
 
   return (
     <div
@@ -322,7 +222,7 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
         fontFamily: "'Jua', sans-serif",
       }}
     >
-      {/* Ready Screen */}
+      {/* Ready */}
       {phase === "ready" && (
         <div className="flex-1 flex flex-col items-center justify-center px-6">
           <motion.div
@@ -337,48 +237,45 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
           >
             <span style={{ fontSize: 50 }}>🧩</span>
             <h3 style={{ fontSize: 24, color: "#5C3317", marginTop: 8 }}>
-              테트리스 조립!
+              직소퍼즐 조립!
             </h3>
             <p style={{ fontSize: 14, color: "#8B4513", marginTop: 8, lineHeight: 1.8 }}>
-              블록을 쌓아서 줄을 완성하세요!
+              섞인 조각들을 원래 위치로 맞춰서
               <br />
-              <strong style={{ color: "#E8740C" }}>{GOAL_LINES}줄</strong>을 클리어하면
-              <br />
-              딱따구리 조립 완료!
+              <strong style={{ color: "#E8740C" }}>딱따구리를 완성</strong>하세요!
             </p>
 
-            {/* Preview tetrominoes */}
-            <div className="flex justify-center gap-2 mt-4 mb-4 flex-wrap">
-              {SHAPES.map((shape, idx) => (
-                <div
-                  key={idx}
-                  className="relative"
-                  style={{ width: 40, height: 40 }}
-                >
-                  {shape.map(([r, c], i) => (
-                    <div
-                      key={i}
-                      className="absolute rounded-sm"
-                      style={{
-                        width: 9,
-                        height: 9,
-                        left: c * 10 + 2,
-                        top: r * 10 + 10,
-                        background: SHAPE_COLORS[idx],
-                        border: "1px solid rgba(0,0,0,0.15)",
-                      }}
-                    />
-                  ))}
-                </div>
-              ))}
+            {/* Preview */}
+            <div className="mt-4 mb-4 mx-auto" style={{ width: 160 }}>
+              <p style={{ fontSize: 11, color: "#8B4513", marginBottom: 4 }}>
+                완성 모습 미리보기
+              </p>
+              <div
+                className="grid gap-0.5 rounded-lg overflow-hidden"
+                style={{
+                  gridTemplateColumns: `repeat(${GRID}, 1fr)`,
+                  border: "2px solid #8B6914",
+                }}
+              >
+                {Array.from({ length: TOTAL }, (_, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-center aspect-square"
+                    style={{
+                      background: PIECE_COLORS[getRow(i)][getCol(i)],
+                    }}
+                  >
+                    <span style={{ fontSize: 16 }}>{PIECE_LABELS[getRow(i)][getCol(i)]}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <div
-              className="p-3 rounded-lg mb-4"
-              style={{ background: "rgba(139,69,19,0.08)" }}
-            >
-              <p style={{ fontSize: 11, color: "#8B4513", lineHeight: 1.6 }}>
-                ⬅️➡️ 이동 &nbsp; 🔄 회전 &nbsp; ⬇️ 빠르게 &nbsp; 💥 즉시 낙하
+            <div className="p-3 rounded-lg mb-4" style={{ background: "rgba(139,69,19,0.08)" }}>
+              <p style={{ fontSize: 12, color: "#8B4513", lineHeight: 1.6 }}>
+                두 조각을 터치해서 자리를 바꿔요!
+                <br />
+                적은 횟수로 빠르게 맞출수록 높은 점수!
               </p>
             </div>
 
@@ -393,452 +290,293 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
               onClick={startGame}
               whileTap={{ scale: 0.95 }}
             >
-              🧩 조립 시작!
+              🧩 퍼즐 시작!
             </motion.button>
           </motion.div>
         </div>
       )}
 
-      {/* Playing / Clearing */}
-      {(phase === "playing" || phase === "clearing") && (
+      {/* Playing */}
+      {phase === "playing" && (
         <>
-          {/* Top HUD */}
-          <div className="px-3 pt-3 pb-1 flex items-center justify-between">
+          {/* HUD */}
+          <div className="px-4 pt-3 pb-1 flex items-center justify-between">
             <div>
-              <span style={{ fontSize: 10, color: "#8B4513" }}>SCORE</span>
-              <p style={{ fontSize: 18, color: "#5C3317" }}>
-                {score.toLocaleString()}
-              </p>
+              <span style={{ fontSize: 10, color: "#8B4513" }}>이동 횟수</span>
+              <p style={{ fontSize: 20, color: "#5C3317" }}>{moves}</p>
             </div>
             <div className="text-center">
-              <span style={{ fontSize: 10, color: "#8B4513" }}>LEVEL</span>
-              <p style={{ fontSize: 18, color: "#E8740C" }}>{level}</p>
+              <span style={{ fontSize: 10, color: "#8B4513" }}>맞춘 조각</span>
+              <p style={{ fontSize: 20, color: "#E8740C" }}>
+                {lockedCount}/{TOTAL}
+              </p>
             </div>
             <div className="text-right">
-              <span style={{ fontSize: 10, color: "#8B4513" }}>COMBO</span>
-              <p style={{ fontSize: 18, color: combo > 0 ? "#FF4444" : "#5C3317" }}>
-                {combo}x
+              <span style={{ fontSize: 10, color: "#8B4513" }}>시간</span>
+              <p style={{ fontSize: 20, color: "#5C3317" }}>
+                {Math.floor(timer / 60)}:{String(timer % 60).padStart(2, "0")}
               </p>
             </div>
           </div>
 
-          {/* Lines progress */}
-          <div className="px-3 mb-1">
+          {/* Progress */}
+          <div className="px-4 mb-2">
             <div className="flex items-center gap-2">
-              <span style={{ fontSize: 11, color: "#8B4513" }}>
-                {linesCleared}/{GOAL_LINES}줄
-              </span>
               <div
                 className="flex-1 h-3 rounded-full overflow-hidden"
                 style={{ background: "rgba(0,0,0,0.1)", border: "1px solid #8B6914" }}
               >
                 <motion.div
                   className="h-full rounded-full"
-                  style={{
-                    background: "linear-gradient(90deg, #4CAF50, #66BB6A)",
-                  }}
-                  animate={{ width: `${(linesCleared / GOAL_LINES) * 100}%` }}
+                  style={{ background: "linear-gradient(90deg, #4CAF50, #66BB6A)" }}
+                  animate={{ width: `${progress}%` }}
                   transition={{ type: "spring", stiffness: 200 }}
                 />
               </div>
-              <span style={{ fontSize: 11, color: "#4CAF50" }}>
-                {Math.round((linesCleared / GOAL_LINES) * 100)}%
-              </span>
+              <span style={{ fontSize: 11, color: "#4CAF50" }}>{Math.round(progress)}%</span>
             </div>
           </div>
 
-          {/* Game area with next preview */}
-          <div className="flex-1 flex mx-2 mb-1 gap-2 min-h-0">
-            {/* Main grid */}
+          {/* Reference image (small) */}
+          <div className="px-4 mb-2 flex items-center gap-2">
             <div
-              className="flex-1 relative rounded-lg overflow-hidden"
+              className="grid gap-px rounded overflow-hidden"
               style={{
-                background: "linear-gradient(180deg, #1a0a2e, #2d1b4e)",
-                border: "3px solid #8B6914",
-                boxShadow: "inset 0 0 20px rgba(0,0,0,0.5)",
+                gridTemplateColumns: `repeat(${GRID}, 1fr)`,
+                width: 52,
+                height: 52,
+                border: "1.5px solid #8B6914",
+                flexShrink: 0,
               }}
             >
-              {/* Grid lines */}
-              <div className="absolute inset-0 opacity-10">
-                {Array.from({ length: COLS - 1 }, (_, i) => (
-                  <div
-                    key={`v${i}`}
-                    className="absolute top-0 bottom-0"
-                    style={{
-                      left: `${((i + 1) / COLS) * 100}%`,
-                      width: 1,
-                      background: "#fff",
-                    }}
-                  />
-                ))}
-                {Array.from({ length: ROWS - 1 }, (_, i) => (
-                  <div
-                    key={`h${i}`}
-                    className="absolute left-0 right-0"
-                    style={{
-                      top: `${((i + 1) / ROWS) * 100}%`,
-                      height: 1,
-                      background: "#fff",
-                    }}
-                  />
-                ))}
-              </div>
-
-              {/* Cells */}
-              {displayGrid.map((row, r) =>
-                row.map((cell, c) => {
-                  if (cell === null) return null;
-                  const isClearing = clearEffect.includes(r);
-                  const isGhost = cell === ("ghost" as any);
-                  const colorIdx = isGhost ? current.colorIdx : (cell as number);
-                  const color = SHAPE_COLORS[colorIdx];
-
-                  return (
-                    <motion.div
-                      key={`${r}-${c}`}
-                      className="absolute rounded-sm"
-                      style={{
-                        left: `${(c / COLS) * 100}%`,
-                        top: `${(r / ROWS) * 100}%`,
-                        width: `${100 / COLS}%`,
-                        height: `${100 / ROWS}%`,
-                        padding: 1,
-                      }}
-                      animate={
-                        isClearing
-                          ? { opacity: [1, 0], scale: [1, 1.3] }
-                          : {}
-                      }
-                      transition={isClearing ? { duration: 0.25 } : {}}
-                    >
-                      <div
-                        className="size-full rounded-sm"
-                        style={{
-                          background: isGhost
-                            ? `${color}30`
-                            : `linear-gradient(135deg, ${color}, ${color}CC)`,
-                          border: isGhost
-                            ? `1px dashed ${color}60`
-                            : `1px solid ${color}`,
-                          boxShadow: isGhost
-                            ? "none"
-                            : `inset 0 1px 2px rgba(255,255,255,0.3), 0 1px 3px rgba(0,0,0,0.3)`,
-                        }}
-                      />
-                    </motion.div>
-                  );
-                })
-              )}
-
-              {/* Line clear flash */}
-              <AnimatePresence>
-                {clearEffect.map((row) => (
-                  <motion.div
-                    key={`clear-${row}`}
-                    className="absolute left-0 right-0"
-                    style={{
-                      top: `${(row / ROWS) * 100}%`,
-                      height: `${100 / ROWS}%`,
-                      background: "rgba(255,255,255,0.8)",
-                    }}
-                    initial={{ opacity: 1, scaleX: 1 }}
-                    animate={{ opacity: 0, scaleX: 1.1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.3 }}
-                  />
-                ))}
-              </AnimatePresence>
-            </div>
-
-            {/* Side panel: Next piece + info */}
-            <div className="flex flex-col gap-2" style={{ width: 65 }}>
-              {/* Next piece */}
-              <div
-                className="p-2 rounded-lg"
-                style={{
-                  background: "rgba(92,51,23,0.1)",
-                  border: "2px solid #8B6914",
-                }}
-              >
-                <span
-                  className="block text-center mb-1"
-                  style={{ fontSize: 9, color: "#8B4513" }}
-                >
-                  NEXT
-                </span>
+              {Array.from({ length: TOTAL }, (_, i) => (
                 <div
-                  className="relative mx-auto"
-                  style={{ width: 44, height: 44 }}
+                  key={i}
+                  className="flex items-center justify-center"
+                  style={{
+                    background: PIECE_COLORS[getRow(i)][getCol(i)],
+                  }}
                 >
-                  {next.shape.map(([r, c], i) => (
-                    <div
-                      key={i}
-                      className="absolute rounded-sm"
-                      style={{
-                        width: 10,
-                        height: 10,
-                        left: c * 11 + 2,
-                        top: r * 11 + 6,
-                        background: SHAPE_COLORS[next.colorIdx],
-                        border: `1px solid ${SHAPE_COLORS[next.colorIdx]}`,
-                        boxShadow:
-                          "inset 0 1px 2px rgba(255,255,255,0.3)",
-                      }}
-                    />
-                  ))}
+                  <span style={{ fontSize: 6 }}>{PIECE_LABELS[getRow(i)][getCol(i)]}</span>
                 </div>
-              </div>
+              ))}
+            </div>
+            <span style={{ fontSize: 11, color: "#8B4513" }}>← 완성 모습</span>
+            <div style={{ flex: 1 }} />
+            <motion.button
+              className="px-3 py-1.5 rounded-lg"
+              style={{
+                background: "rgba(139,69,19,0.1)",
+                border: "1.5px solid #8B6914",
+                fontSize: 11,
+                color: "#8B4513",
+              }}
+              onClick={showHint}
+              whileTap={{ scale: 0.9 }}
+            >
+              💡 힌트
+            </motion.button>
+          </div>
 
-              {/* Woodpecker assembly progress */}
-              <div
-                className="flex-1 rounded-lg p-2 flex flex-col items-center justify-center"
-                style={{
-                  background: "rgba(255,248,220,0.8)",
-                  border: "2px solid #8B6914",
-                }}
-              >
-                <div className="relative" style={{ width: 40, height: 50 }}>
-                  {/* Body */}
-                  <div
-                    className="absolute rounded-lg"
+          {/* Puzzle grid */}
+          <div className="flex-1 flex items-center justify-center px-4 mb-2">
+            <div
+              className="grid gap-1 w-full max-w-xs aspect-square"
+              style={{ gridTemplateColumns: `repeat(${GRID}, 1fr)` }}
+            >
+              {Array.from({ length: TOTAL }, (_, pos) => {
+                const piece = getPieceAt(pos);
+                if (!piece) return null;
+                const correctRow = getRow(piece.id);
+                const correctCol = getCol(piece.id);
+                const isSelected = selected === pos;
+                const isLocked = piece.locked;
+                const isJustLocked = justLocked.includes(piece.id);
+                const showHintHighlight = hintShown && !isLocked;
+
+                return (
+                  <motion.button
+                    key={pos}
+                    className="relative aspect-square rounded-lg flex items-center justify-center overflow-hidden"
                     style={{
-                      left: 8, top: 18, width: 24, height: 30,
-                      background: linesCleared >= 2 ? "#8B4513" : "#ddd",
-                      transition: "background 0.5s",
+                      background: isLocked
+                        ? PIECE_COLORS[correctRow][correctCol]
+                        : `${PIECE_COLORS[correctRow][correctCol]}CC`,
+                      border: isSelected
+                        ? "3px solid #FF8C00"
+                        : isLocked
+                        ? "2px solid rgba(255,255,255,0.5)"
+                        : showHintHighlight
+                        ? "2px dashed #FF4444"
+                        : "2px solid rgba(139,105,20,0.3)",
+                      boxShadow: isSelected
+                        ? "0 0 12px rgba(255,140,0,0.6)"
+                        : isJustLocked
+                        ? "0 0 15px rgba(76,175,80,0.8)"
+                        : "0 2px 4px rgba(0,0,0,0.1)",
+                      cursor: isLocked ? "default" : "pointer",
+                      opacity: isLocked ? 1 : 0.9,
                     }}
-                  />
-                  {/* Head */}
-                  <div
-                    className="absolute rounded-full"
-                    style={{
-                      left: 10, top: 2, width: 20, height: 18,
-                      background: linesCleared >= 4 ? "#DC143C" : "#ddd",
-                      transition: "background 0.5s",
-                    }}
-                  />
-                  {/* Beak */}
-                  <div
-                    style={{
-                      position: "absolute", left: 30, top: 8,
-                      width: 0, height: 0,
-                      borderTop: "4px solid transparent",
-                      borderBottom: "4px solid transparent",
-                      borderLeft: `8px solid ${linesCleared >= 6 ? "#FFD700" : "#ddd"}`,
-                      transition: "border-color 0.5s",
-                    }}
-                  />
-                  {/* Wing */}
-                  <div
-                    className="absolute rounded"
-                    style={{
-                      left: 2, top: 22, width: 10, height: 16,
-                      background: linesCleared >= 8 ? "#654321" : "#ddd",
-                      transition: "background 0.5s",
-                    }}
-                  />
-                  {/* Eye */}
-                  {linesCleared >= 4 && (
-                    <div
-                      className="absolute rounded-full"
-                      style={{
-                        left: 16, top: 7, width: 5, height: 5,
-                        background: "#fff",
-                        border: "1.5px solid #333",
-                      }}
-                    />
-                  )}
-                </div>
-                <span style={{ fontSize: 8, color: "#8B4513", marginTop: 4 }}>
-                  {linesCleared < 2
-                    ? "몸통..."
-                    : linesCleared < 4
-                    ? "머리..."
-                    : linesCleared < 6
-                    ? "부리..."
-                    : linesCleared < 8
-                    ? "날개..."
-                    : linesCleared < 10
-                    ? "거의 완성!"
-                    : "완성!"}
-                </span>
-              </div>
+                    onClick={() => handlePieceTap(pos)}
+                    whileTap={isLocked ? {} : { scale: 0.92 }}
+                    animate={
+                      isJustLocked
+                        ? { scale: [1, 1.15, 1], rotate: [0, 5, -5, 0] }
+                        : isSelected
+                        ? { scale: [1, 1.05, 1] }
+                        : {}
+                    }
+                    transition={
+                      isJustLocked
+                        ? { duration: 0.5 }
+                        : isSelected
+                        ? { duration: 0.6, repeat: Infinity }
+                        : {}
+                    }
+                    layout
+                  >
+                    <span style={{ fontSize: 28, filter: isLocked ? "none" : "saturate(0.7)" }}>
+                      {PIECE_LABELS[correctRow][correctCol]}
+                    </span>
+
+                    {/* 조각 번호 (힌트) */}
+                    {hintShown && !isLocked && (
+                      <motion.div
+                        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center"
+                        style={{ background: "#FF4444", fontSize: 8, color: "#fff" }}
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                      >
+                        {piece.id + 1}
+                      </motion.div>
+                    )}
+
+                    {/* 잠금 표시 */}
+                    {isLocked && (
+                      <motion.div
+                        className="absolute top-0.5 left-0.5"
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                      >
+                        <span style={{ fontSize: 10 }}>✅</span>
+                      </motion.div>
+                    )}
+                  </motion.button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Touch Controls */}
-          <div className="px-2 pb-3">
-            <div className="flex gap-1.5 items-center justify-center">
-              {/* Left */}
-              <motion.button
-                className="flex items-center justify-center rounded-xl"
-                style={{
-                  width: 56, height: 56,
-                  background: "linear-gradient(180deg, #C4A67A, #A0845A)",
-                  border: "2px solid #8B6914",
-                  boxShadow: "0 3px 0 #654321",
-                }}
-                onClick={moveLeft}
-                whileTap={{ scale: 0.9, y: 2 }}
-              >
-                <span style={{ fontSize: 22 }}>⬅️</span>
-              </motion.button>
-
-              {/* Down */}
-              <motion.button
-                className="flex items-center justify-center rounded-xl"
-                style={{
-                  width: 56, height: 56,
-                  background: "linear-gradient(180deg, #C4A67A, #A0845A)",
-                  border: "2px solid #8B6914",
-                  boxShadow: "0 3px 0 #654321",
-                }}
-                onClick={moveDown}
-                whileTap={{ scale: 0.9, y: 2 }}
-              >
-                <span style={{ fontSize: 22 }}>⬇️</span>
-              </motion.button>
-
-              {/* Right */}
-              <motion.button
-                className="flex items-center justify-center rounded-xl"
-                style={{
-                  width: 56, height: 56,
-                  background: "linear-gradient(180deg, #C4A67A, #A0845A)",
-                  border: "2px solid #8B6914",
-                  boxShadow: "0 3px 0 #654321",
-                }}
-                onClick={moveRight}
-                whileTap={{ scale: 0.9, y: 2 }}
-              >
-                <span style={{ fontSize: 22 }}>➡️</span>
-              </motion.button>
-
-              {/* Spacer */}
-              <div style={{ width: 8 }} />
-
-              {/* Rotate */}
-              <motion.button
-                className="flex items-center justify-center rounded-xl"
-                style={{
-                  width: 56, height: 56,
-                  background: "linear-gradient(180deg, #4ECDC4, #3BAFA8)",
-                  border: "2px solid #2E8B7A",
-                  boxShadow: "0 3px 0 #1A6B5A",
-                }}
-                onClick={rotate}
-                whileTap={{ scale: 0.9, y: 2 }}
-              >
-                <span style={{ fontSize: 22 }}>🔄</span>
-              </motion.button>
-
-              {/* Hard drop */}
-              <motion.button
-                className="flex items-center justify-center rounded-xl"
-                style={{
-                  width: 56, height: 56,
-                  background: "linear-gradient(180deg, #FF8C00, #E8740C)",
-                  border: "2px solid #B8560B",
-                  boxShadow: "0 3px 0 #8B4000",
-                }}
-                onClick={hardDrop}
-                whileTap={{ scale: 0.9, y: 2 }}
-              >
-                <span style={{ fontSize: 22 }}>💥</span>
-              </motion.button>
+          {/* Bottom status */}
+          <div className="px-4 pb-4">
+            <div
+              className="p-3 rounded-xl text-center"
+              style={{ background: "rgba(139,69,19,0.08)", border: "1px solid #8B691466" }}
+            >
+              {selected !== null ? (
+                <p style={{ fontSize: 13, color: "#E8740C" }}>
+                  🔸 바꿀 조각을 선택하세요!
+                </p>
+              ) : lockedCount < 4 ? (
+                <p style={{ fontSize: 13, color: "#8B4513" }}>
+                  🧩 조각을 터치해서 자리를 바꿔보세요!
+                </p>
+              ) : lockedCount < 10 ? (
+                <p style={{ fontSize: 13, color: "#4CAF50" }}>
+                  👍 잘하고 있어요! {TOTAL - lockedCount}조각 남았어요!
+                </p>
+              ) : (
+                <p style={{ fontSize: 13, color: "#FF8C00" }}>
+                  🔥 거의 다 맞췄어요! 조금만 더!
+                </p>
+              )}
             </div>
           </div>
         </>
       )}
-
-      {/* Game Over */}
-      <AnimatePresence>
-        {phase === "gameover" && (
-          <motion.div
-            className="absolute inset-0 z-30 flex items-center justify-center"
-            style={{ background: "rgba(92,51,23,0.85)" }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            <motion.div
-              className="text-center p-6 rounded-2xl mx-6"
-              style={{
-                background: "rgba(255,248,220,0.95)",
-                border: "3px solid #8B6914",
-              }}
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              transition={{ type: "spring" }}
-            >
-              <motion.span
-                style={{ fontSize: 50, display: "block" }}
-                animate={{ rotate: [0, -10, 10, -10, 0] }}
-                transition={{ duration: 0.6, repeat: 2 }}
-              >
-                😵
-              </motion.span>
-              <h3 style={{ fontSize: 22, color: "#5C3317", marginTop: 8 }}>
-                블록이 가득 찼어요!
-              </h3>
-              <p style={{ fontSize: 14, color: "#8B4513", marginTop: 8 }}>
-                {linesCleared}/{GOAL_LINES}줄 클리어
-              </p>
-              <p style={{ fontSize: 13, color: "#FF4444", marginTop: 4, lineHeight: 1.6 }}>
-                {GOAL_LINES}줄을 클리어해야
-                <br />
-                다음 단계로 갈 수 있어요!
-              </p>
-              <motion.button
-                className="w-full py-4 rounded-xl text-white mt-5"
-                style={{
-                  background: "linear-gradient(180deg, #FF8C00, #E8740C)",
-                  border: "3px solid #B8560B",
-                  boxShadow: "0 4px 12px rgba(232,116,12,0.4)",
-                  fontSize: 18,
-                }}
-                onClick={startGame}
-                whileTap={{ scale: 0.95 }}
-                initial={{ y: 10, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ delay: 0.5 }}
-              >
-                🔄 다시 도전!
-              </motion.button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Complete */}
       <AnimatePresence>
         {phase === "complete" && (
           <motion.div
             className="absolute inset-0 z-30 flex items-center justify-center"
-            style={{ background: "rgba(255,248,220,0.9)" }}
+            style={{ background: "rgba(255,248,220,0.95)" }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
           >
             <motion.div
-              className="text-center"
+              className="text-center px-6"
               initial={{ scale: 0, rotate: -10 }}
               animate={{ scale: 1, rotate: 0 }}
               transition={{ type: "spring", stiffness: 200 }}
             >
+              {/* 완성된 퍼즐 */}
+              <motion.div
+                className="mx-auto mb-4"
+                style={{ width: 160 }}
+                animate={{ rotate: [0, 2, -2, 0] }}
+                transition={{ duration: 2, repeat: Infinity }}
+              >
+                <div
+                  className="grid gap-0.5 rounded-xl overflow-hidden"
+                  style={{
+                    gridTemplateColumns: `repeat(${GRID}, 1fr)`,
+                    border: "3px solid #FFD700",
+                    boxShadow: "0 0 20px rgba(255,215,0,0.5)",
+                  }}
+                >
+                  {Array.from({ length: TOTAL }, (_, i) => (
+                    <motion.div
+                      key={i}
+                      className="flex items-center justify-center aspect-square"
+                      style={{ background: PIECE_COLORS[getRow(i)][getCol(i)] }}
+                      initial={{ scale: 0, rotate: 180 }}
+                      animate={{ scale: 1, rotate: 0 }}
+                      transition={{ delay: i * 0.05, type: "spring" }}
+                    >
+                      <span style={{ fontSize: 16 }}>{PIECE_LABELS[getRow(i)][getCol(i)]}</span>
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+
               <motion.span
-                style={{ fontSize: 60 }}
-                animate={{ rotate: [0, 10, -10, 0] }}
-                transition={{ duration: 0.5, repeat: 3 }}
+                style={{ fontSize: 50 }}
+                animate={{ rotate: [0, 10, -10, 0], scale: [1, 1.2, 1] }}
+                transition={{ duration: 0.8, repeat: 3 }}
               >
                 🎉
               </motion.span>
-              <p style={{ fontSize: 26, color: "#5C3317", marginTop: 8 }}>
-                조립 완료!
-              </p>
+              <p style={{ fontSize: 26, color: "#5C3317", marginTop: 8 }}>조립 완료!</p>
               <p style={{ fontSize: 15, color: "#8B4513", marginTop: 4 }}>
-                {GOAL_LINES}줄 클리어! · {piecesUsed}개 블록 사용
+                {moves}번 이동 · {Math.floor(timer / 60)}:{String(timer % 60).padStart(2, "0")}
               </p>
-              <p style={{ fontSize: 18, color: "#E8740C", marginTop: 4 }}>
-                점수: {score.toLocaleString()}
-              </p>
+
+              {/* Confetti */}
+              {Array.from({ length: 20 }, (_, i) => (
+                <motion.div
+                  key={i}
+                  className="absolute rounded-full"
+                  style={{
+                    width: 8 + Math.random() * 8,
+                    height: 8 + Math.random() * 8,
+                    background: ["#FF6B6B", "#FFD700", "#4CAF50", "#2196F3", "#FF8C00", "#C084FC"][i % 6],
+                    left: `${Math.random() * 100}%`,
+                    top: -20,
+                  }}
+                  animate={{
+                    y: [0, 600 + Math.random() * 200],
+                    x: [0, (Math.random() - 0.5) * 200],
+                    rotate: [0, 360 * (Math.random() > 0.5 ? 1 : -1)],
+                    opacity: [1, 0],
+                  }}
+                  transition={{
+                    duration: 2 + Math.random(),
+                    delay: Math.random() * 0.5,
+                    ease: "easeOut",
+                  }}
+                />
+              ))}
             </motion.div>
           </motion.div>
         )}
