@@ -1,582 +1,540 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import {
+  startBGM,
+  stopBGM,
+  sfxMove,
+  sfxRotate,
+  sfxSoftDrop,
+  sfxHardDrop,
+  sfxLock,
+  sfxLineClear,
+  sfxCombo,
+  sfxGameOver,
+  sfxComplete,
+  sfxPartAssembled,
+} from "./tetris-sounds";
 
 interface AssemblyGameProps {
   onComplete: (score: number) => void;
 }
 
-// 딱따구리 직소퍼즐 - 4x4 = 16 조각
-const GRID = 4;
-const TOTAL = GRID * GRID;
+const COLS = 10;
+const ROWS = 20;
+const GOAL_LINES = 10;
 
-interface PuzzlePiece {
-  id: number;        // 원래 위치 (정답)
-  current: number;   // 현재 위치
-  locked: boolean;   // 맞춰졌는지
+const SHAPES = [
+  [[0,0],[0,1],[0,2],[0,3]], // I
+  [[0,0],[0,1],[1,0],[1,1]], // O
+  [[0,0],[0,1],[0,2],[1,1]], // T
+  [[0,1],[0,2],[1,0],[1,1]], // S
+  [[0,0],[0,1],[1,1],[1,2]], // Z
+  [[0,0],[0,1],[0,2],[1,0]], // L
+  [[0,0],[0,1],[0,2],[1,2]], // J
+];
+
+const COLORS = [
+  "#4ECDC4","#FFD93D","#C084FC","#6BCB77",
+  "#FF6B6B","#FF8C42","#60A5FA",
+];
+
+type Cell = number | null;
+type Grid = Cell[][];
+interface Piece { shape: number[][]; colorIdx: number; row: number; col: number; }
+
+function emptyGrid(): Grid { return Array.from({length:ROWS},()=>Array(COLS).fill(null)); }
+function mkPiece(): Piece {
+  const i = Math.floor(Math.random()*7);
+  return { shape: SHAPES[i].map(c=>[...c]), colorIdx: i, row: 0, col: 3 };
 }
-
-// 딱따구리 부품 색상 맵 (4x4 그리드에서 각 조각의 색상)
-const PIECE_COLORS: string[][] = [
-  ["#87CEEB", "#87CEEB", "#87CEEB", "#87CEEB"], // 하늘
-  ["#87CEEB", "#DC143C", "#DC143C", "#87CEEB"], // 머리
-  ["#87CEEB", "#DC143C", "#FFD700", "#87CEEB"], // 머리+부리
-  ["#654321", "#8B4513", "#8B4513", "#654321"], // 날개+몸통
-];
-
-// 딱따구리 부위 이모지/라벨
-const PIECE_LABELS: string[][] = [
-  ["☁️", "🌤️", "☁️", "🌤️"],
-  ["🌿", "🔴", "🔴", "🌿"],
-  ["🌿", "🟤", "📐", "🌿"],
-  ["🍂", "🪵", "🪵", "🍂"],
-];
-
-function shufflePieces(): PuzzlePiece[] {
-  const pieces: PuzzlePiece[] = Array.from({ length: TOTAL }, (_, i) => ({
-    id: i,
-    current: i,
-    locked: false,
-  }));
-
-  // Fisher-Yates 셔플 (solvable하게)
-  for (let i = TOTAL - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = pieces[i].current;
-    pieces[i].current = pieces[j].current;
-    pieces[j].current = tmp;
+function rotateCW(s: number[][]): number[][] {
+  const mR = Math.max(...s.map(c=>c[0]));
+  return s.map(([r,c])=>[c, mR-r]);
+}
+function valid(g: Grid, p: Piece): boolean {
+  for (const [dr,dc] of p.shape) {
+    const r=p.row+dr, c=p.col+dc;
+    if (r<0||r>=ROWS||c<0||c>=COLS) return false;
+    if (g[r][c]!==null) return false;
   }
-
-  // 이미 맞춰진 건 잠금
-  pieces.forEach((p) => {
-    if (p.current === p.id) p.locked = true;
-  });
-
-  return pieces;
+  return true;
+}
+function place(g: Grid, p: Piece): Grid {
+  const ng = g.map(r=>[...r]);
+  for (const [dr,dc] of p.shape) {
+    const r=p.row+dr, c=p.col+dc;
+    if (r>=0&&r<ROWS&&c>=0&&c<COLS) ng[r][c]=p.colorIdx;
+  }
+  return ng;
+}
+function clearRows(g: Grid): {grid:Grid; cleared:number; rows:number[]} {
+  const rows: number[] = [];
+  g.forEach((r,i)=>{ if(r.every(c=>c!==null)) rows.push(i); });
+  if (!rows.length) return {grid:g, cleared:0, rows:[]};
+  const kept = g.filter((_,i)=>!rows.includes(i));
+  const empty = Array.from({length:rows.length},()=>Array(COLS).fill(null));
+  return {grid:[...empty,...kept], cleared:rows.length, rows};
+}
+function ghostRow(g: Grid, p: Piece): number {
+  let gr = p.row;
+  while(valid(g, {...p, row:gr+1})) gr++;
+  return gr;
 }
 
-// 사운드
-function playSwapSound() {
-  try {
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "triangle";
-    osc.frequency.value = 600;
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.1);
-  } catch {}
+// 개별 블록 중력: 빈 칸 위에 떠있는 블록을 아래로 떨어뜨림
+function applyGravity(g: Grid): Grid {
+  const ng: Grid = Array.from({length:ROWS},()=>Array(COLS).fill(null));
+  for (let c = 0; c < COLS; c++) {
+    // 각 열에서 블록을 모아서 바닥부터 채움
+    const blocks: number[] = [];
+    for (let r = ROWS - 1; r >= 0; r--) {
+      if (g[r][c] !== null) blocks.push(g[r][c] as number);
+    }
+    for (let i = 0; i < blocks.length; i++) {
+      ng[ROWS - 1 - i][c] = blocks[i];
+    }
+  }
+  return ng;
 }
 
-function playLockSound() {
-  try {
-    const ctx = new AudioContext();
-    [523, 659, 784].forEach((f, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "square";
-      osc.frequency.value = f;
-      gain.gain.setValueAtTime(0.12, ctx.currentTime + i * 0.08);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.08 + 0.15);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(ctx.currentTime + i * 0.08);
-      osc.stop(ctx.currentTime + i * 0.08 + 0.15);
-    });
-  } catch {}
+type Phase = "ready"|"playing"|"clearing"|"gameover"|"complete";
+
+interface GS {
+  phase: Phase;
+  grid: Grid;
+  cur: Piece;
+  next: Piece;
+  lines: number;
+  score: number;
+  combo: number;
+  pieces: number;
+  level: number;
+  clearFx: number[];
 }
 
-function playCompleteSound() {
-  try {
-    const ctx = new AudioContext();
-    [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "square";
-      osc.frequency.value = f;
-      gain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.06);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.06 + 0.2);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(ctx.currentTime + i * 0.06);
-      osc.stop(ctx.currentTime + i * 0.06 + 0.25);
-    });
-  } catch {}
+function initGS(): GS {
+  return {
+    phase:"ready", grid:emptyGrid(), cur:mkPiece(), next:mkPiece(),
+    lines:0, score:0, combo:0, pieces:0, level:1, clearFx:[]
+  };
 }
 
 export function AssemblyGame({ onComplete }: AssemblyGameProps) {
-  const [phase, setPhase] = useState<"ready" | "playing" | "complete">("ready");
-  const [pieces, setPieces] = useState<PuzzlePiece[]>([]);
-  const [selected, setSelected] = useState<number | null>(null);
-  const [moves, setMoves] = useState(0);
-  const [timer, setTimer] = useState(0);
-  const [justLocked, setJustLocked] = useState<number[]>([]);
-  const [hintShown, setHintShown] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setInterval>>();
-  const startTimeRef = useRef(0);
+  const gsRef = useRef<GS>(initGS());
+  const [, setTick] = useState(0);
+  const render = useCallback(()=>setTick(t=>t+1),[]);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
-  const lockedCount = pieces.filter((p) => p.locked).length;
-  const progress = (lockedCount / TOTAL) * 100;
+  // Game loop refs
+  const rafRef = useRef(0);
+  const lastDropRef = useRef(0);
+  const runningRef = useRef(false);
 
-  const startGame = useCallback(() => {
-    const shuffled = shufflePieces();
-    // 최소 10개는 섞이도록
-    let attempts = 0;
-    let p = shuffled;
-    while (p.filter((x) => x.locked).length > 6 && attempts < 10) {
-      p = shufflePieces();
-      attempts++;
+  const gs = gsRef.current;
+
+  // --- Game actions (mutate gsRef directly, then render) ---
+
+  function dropSpeed() {
+    return Math.max(150, 600 - (gsRef.current.level - 1) * 80);
+  }
+
+  function spawnNext(): boolean {
+    const g = gsRef.current;
+    const np = g.next;
+    if (!valid(g.grid, np)) {
+      g.phase = "gameover";
+      stopLoop();
+      stopBGM();
+      sfxGameOver();
+      render();
+      return false;
     }
-    setPieces(p);
-    setSelected(null);
-    setMoves(0);
-    setTimer(0);
-    setPhase("playing");
-    startTimeRef.current = Date.now();
-    timerRef.current = setInterval(() => {
-      setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
-    }, 1000);
-  }, []);
+    g.cur = np;
+    g.next = mkPiece();
+    g.pieces++;
+    return true;
+  }
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
+  function lockCurrent() {
+    const g = gsRef.current;
+    const p = g.cur;
 
-  const handlePieceTap = useCallback(
-    (idx: number) => {
-      if (phase !== "playing") return;
-      const piece = pieces.find((p) => p.current === idx);
-      if (!piece || piece.locked) return;
+    // 바닥까지 강제 이동
+    const gr = ghostRow(g.grid, p);
+    const finalP = {...p, row: gr};
+    g.cur = finalP;
 
-      if (selected === null) {
-        setSelected(idx);
-      } else if (selected === idx) {
-        setSelected(null);
-      } else {
-        // Swap
-        const newPieces = pieces.map((p) => {
-          if (p.current === selected) return { ...p, current: idx };
-          if (p.current === idx) return { ...p, current: selected };
-          return p;
-        });
+    // 배치 (중력은 배치 시 적용하지 않음 - 일반 테트리스처럼 놓인 자리에 유지)
+    const newGrid = place(g.grid, finalP);
 
-        // Check locks
-        const newlyLocked: number[] = [];
-        const finalPieces = newPieces.map((p) => {
-          if (!p.locked && p.current === p.id) {
-            newlyLocked.push(p.id);
-            return { ...p, locked: true };
-          }
-          return p;
-        });
+    // 줄 클리어 체크
+    const {grid: afterClear, cleared, rows: clearedRows} = clearRows(newGrid);
 
-        setPieces(finalPieces);
-        setSelected(null);
-        setMoves((m) => m + 1);
-
-        if (newlyLocked.length > 0) {
-          playLockSound();
-          setJustLocked(newlyLocked);
-          setTimeout(() => setJustLocked([]), 600);
-        } else {
-          playSwapSound();
-        }
-
-        // Check complete
-        if (finalPieces.every((p) => p.locked)) {
-          clearInterval(timerRef.current);
-          playCompleteSound();
-          setPhase("complete");
-          // Score based on moves and time
-          const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
-          const movePenalty = Math.max(0, moves - TOTAL) * 2;
-          const timePenalty = Math.max(0, elapsed - 30);
-          const score = Math.max(30, Math.min(100, 100 - movePenalty - timePenalty));
-          setTimeout(() => onComplete(score), 2500);
-        }
+    if (cleared > 0) {
+      // 줄 클리어 후 중력 적용 + 연쇄 클리어
+      let totalCleared = cleared;
+      let finalGrid = applyGravity(afterClear);
+      let chainResult = clearRows(finalGrid);
+      while (chainResult.cleared > 0) {
+        totalCleared += chainResult.cleared;
+        finalGrid = applyGravity(chainResult.grid);
+        chainResult = clearRows(finalGrid);
       }
-    },
-    [phase, pieces, selected, moves, onComplete]
-  );
+      finalGrid = chainResult.grid;
 
-  const showHint = useCallback(() => {
-    setHintShown(true);
-    setTimeout(() => setHintShown(false), 2000);
-  }, []);
+      sfxLineClear(totalCleared);
+      const lineScores = [0,100,300,500,800];
+      g.score += (lineScores[Math.min(totalCleared,4)]||totalCleared*200) * g.level;
+      g.combo++;
+      if (g.combo > 1) sfxCombo(g.combo);
+      g.lines += totalCleared;
+      g.level = Math.floor(g.lines/3)+1;
 
-  // 정답 이미지의 위치에서 조각 가져오기
-  const getPieceAt = (pos: number) => pieces.find((p) => p.current === pos);
-  const getRow = (pos: number) => Math.floor(pos / GRID);
-  const getCol = (pos: number) => pos % GRID;
+      // Show clear effect
+      g.phase = "clearing";
+      g.grid = newGrid;
+      g.clearFx = clearedRows;
+      stopLoop();
+      render();
+
+      const capturedFinalGrid = finalGrid;
+      setTimeout(()=>{
+        const g2 = gsRef.current;
+        g2.grid = capturedFinalGrid;
+        g2.clearFx = [];
+
+        sfxPartAssembled();
+
+        if (g2.lines >= GOAL_LINES) {
+          g2.phase = "complete";
+          stopBGM();
+          sfxComplete();
+          render();
+          const eff = Math.max(0, 100 - g2.pieces);
+          const fs = Math.min(100, Math.round(60 + eff * 0.4));
+          setTimeout(()=>onCompleteRef.current(fs), 2000);
+        } else {
+          g2.phase = "playing";
+          if (spawnNext()) {
+            startLoop();
+          }
+          render();
+        }
+      }, 300);
+    } else {
+      sfxLock();
+      g.grid = newGrid;
+      g.combo = 0;
+      spawnNext();
+      render();
+    }
+  }
+
+  function moveDown() {
+    const g = gsRef.current;
+    if (g.phase !== "playing") return;
+    const moved = {...g.cur, row: g.cur.row + 1};
+    if (valid(g.grid, moved)) {
+      g.cur = moved;
+      render();
+    } else {
+      lockCurrent();
+    }
+  }
+
+  function moveLeft() {
+    const g = gsRef.current;
+    if (g.phase !== "playing") return;
+    const moved = {...g.cur, col: g.cur.col - 1};
+    if (valid(g.grid, moved)) { g.cur = moved; sfxMove(); render(); }
+  }
+
+  function moveRight() {
+    const g = gsRef.current;
+    if (g.phase !== "playing") return;
+    const moved = {...g.cur, col: g.cur.col + 1};
+    if (valid(g.grid, moved)) { g.cur = moved; sfxMove(); render(); }
+  }
+
+  function rotate() {
+    const g = gsRef.current;
+    if (g.phase !== "playing") return;
+    const rotated = {...g.cur, shape: rotateCW(g.cur.shape)};
+    for (const off of [0,-1,1,-2,2]) {
+      const kicked = {...rotated, col: rotated.col + off};
+      if (valid(g.grid, kicked)) { g.cur = kicked; sfxRotate(); render(); return; }
+    }
+  }
+
+  function hardDrop() {
+    const g = gsRef.current;
+    if (g.phase !== "playing") return;
+    sfxHardDrop();
+    const gr = ghostRow(g.grid, g.cur);
+    g.cur = {...g.cur, row: gr};
+    lockCurrent();
+  }
+
+  // --- Game loop (requestAnimationFrame) ---
+
+  function gameLoop(timestamp: number) {
+    if (!runningRef.current) return;
+    const g = gsRef.current;
+    if (g.phase !== "playing") { runningRef.current = false; return; }
+
+    const elapsed = timestamp - lastDropRef.current;
+    if (elapsed >= dropSpeed()) {
+      lastDropRef.current = timestamp;
+      moveDown();
+    }
+
+    rafRef.current = requestAnimationFrame(gameLoop);
+  }
+
+  function startLoop() {
+    runningRef.current = true;
+    lastDropRef.current = performance.now();
+    rafRef.current = requestAnimationFrame(gameLoop);
+  }
+
+  function stopLoop() {
+    runningRef.current = false;
+    cancelAnimationFrame(rafRef.current);
+  }
+
+  function startGame() {
+    gsRef.current = {...initGS(), phase: "playing"};
+    startBGM();
+    render();
+    startLoop();
+  }
+
+  // Cleanup
+  useEffect(()=>{
+    return ()=>{ stopLoop(); stopBGM(); };
+  },[]);
+
+  // Keyboard
+  useEffect(()=>{
+    const h = (e: KeyboardEvent) => {
+      if (gsRef.current.phase !== "playing") return;
+      switch(e.key) {
+        case "ArrowLeft": moveLeft(); break;
+        case "ArrowRight": moveRight(); break;
+        case "ArrowDown": sfxSoftDrop(); moveDown(); break;
+        case "ArrowUp": rotate(); break;
+        case " ": hardDrop(); e.preventDefault(); break;
+      }
+    };
+    window.addEventListener("keydown", h);
+    return ()=>window.removeEventListener("keydown", h);
+  },[]);
+
+  // --- Render ---
+  const {phase, grid, cur, next, lines, score, combo, pieces, level, clearFx} = gs;
+  const gr = phase === "playing" ? ghostRow(grid, cur) : cur.row;
+
+  // Build display grid
+  const dg: (Cell|"ghost")[][] = grid.map(r=>[...r]);
+  if (phase === "playing") {
+    for (const [dr,dc] of cur.shape) {
+      const r=gr+dr, c=cur.col+dc;
+      if (r>=0&&r<ROWS&&c>=0&&c<COLS&&dg[r][c]===null) dg[r][c]="ghost" as any;
+    }
+    for (const [dr,dc] of cur.shape) {
+      const r=cur.row+dr, c=cur.col+dc;
+      if (r>=0&&r<ROWS&&c>=0&&c<COLS) dg[r][c]=cur.colorIdx;
+    }
+  }
 
   return (
-    <div
-      className="size-full flex flex-col relative overflow-hidden"
-      style={{
-        background: "linear-gradient(180deg, #FFF8DC 0%, #F5DEB3 50%, #DEB887 100%)",
-        fontFamily: "'Jua', sans-serif",
-      }}
-    >
-      {/* Ready */}
-      {phase === "ready" && (
+    <div className="size-full flex flex-col relative overflow-hidden"
+      style={{background:"linear-gradient(180deg,#FFF8DC 0%,#F5DEB3 50%,#DEB887 100%)",fontFamily:"'Jua',sans-serif"}}>
+
+      {phase==="ready"&&(
         <div className="flex-1 flex flex-col items-center justify-center px-6">
-          <motion.div
-            className="text-center p-6 rounded-2xl w-full"
-            style={{
-              background: "rgba(255,248,220,0.95)",
-              border: "3px solid #8B6914",
-              boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
-            }}
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-          >
-            <span style={{ fontSize: 50 }}>🧩</span>
-            <h3 style={{ fontSize: 24, color: "#5C3317", marginTop: 8 }}>
-              직소퍼즐 조립!
-            </h3>
-            <p style={{ fontSize: 14, color: "#8B4513", marginTop: 8, lineHeight: 1.8 }}>
-              섞인 조각들을 원래 위치로 맞춰서
-              <br />
-              <strong style={{ color: "#E8740C" }}>딱따구리를 완성</strong>하세요!
+          <motion.div className="text-center p-6 rounded-2xl w-full"
+            style={{background:"rgba(255,248,220,0.95)",border:"3px solid #8B6914",boxShadow:"0 4px 20px rgba(0,0,0,0.1)"}}
+            initial={{scale:0.8,opacity:0}} animate={{scale:1,opacity:1}}>
+            <span style={{fontSize:50}}>🧩</span>
+            <h3 style={{fontSize:24,color:"#5C3317",marginTop:8}}>테트리스 조립!</h3>
+            <p style={{fontSize:14,color:"#8B4513",marginTop:8,lineHeight:1.8}}>
+              블록을 쌓아서 줄을 완성하세요!<br/>
+              <strong style={{color:"#E8740C"}}>{GOAL_LINES}줄</strong>을 클리어하면<br/>딱따구리 조립 완료!
             </p>
-
-            {/* Preview */}
-            <div className="mt-4 mb-4 mx-auto" style={{ width: 160 }}>
-              <p style={{ fontSize: 11, color: "#8B4513", marginBottom: 4 }}>
-                완성 모습 미리보기
-              </p>
-              <div
-                className="grid gap-0.5 rounded-lg overflow-hidden"
-                style={{
-                  gridTemplateColumns: `repeat(${GRID}, 1fr)`,
-                  border: "2px solid #8B6914",
-                }}
-              >
-                {Array.from({ length: TOTAL }, (_, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center justify-center aspect-square"
-                    style={{
-                      background: PIECE_COLORS[getRow(i)][getCol(i)],
-                    }}
-                  >
-                    <span style={{ fontSize: 16 }}>{PIECE_LABELS[getRow(i)][getCol(i)]}</span>
-                  </div>
-                ))}
-              </div>
+            <div className="flex justify-center gap-2 mt-4 mb-4 flex-wrap">
+              {SHAPES.map((shape,idx)=>(
+                <div key={idx} className="relative" style={{width:40,height:40}}>
+                  {shape.map(([r,c],i)=>(
+                    <div key={i} className="absolute rounded-sm"
+                      style={{width:9,height:9,left:c*10+2,top:r*10+10,background:COLORS[idx],border:"1px solid rgba(0,0,0,0.15)"}}/>
+                  ))}
+                </div>
+              ))}
             </div>
-
-            <div className="p-3 rounded-lg mb-4" style={{ background: "rgba(139,69,19,0.08)" }}>
-              <p style={{ fontSize: 12, color: "#8B4513", lineHeight: 1.6 }}>
-                두 조각을 터치해서 자리를 바꿔요!
-                <br />
-                적은 횟수로 빠르게 맞출수록 높은 점수!
+            <div className="p-3 rounded-lg mb-4" style={{background:"rgba(139,69,19,0.08)"}}>
+              <p style={{fontSize:11,color:"#8B4513",lineHeight:1.6}}>
+                ⬅️➡️ 이동 &nbsp; 🔄 회전 &nbsp; ⬇️ 빠르게 &nbsp; 💥 즉시 낙하
               </p>
             </div>
-
-            <motion.button
-              className="w-full py-4 rounded-xl text-white"
-              style={{
-                background: "linear-gradient(180deg, #FF8C00, #E8740C)",
-                border: "3px solid #B8560B",
-                boxShadow: "0 4px 12px rgba(232,116,12,0.4)",
-                fontSize: 20,
-              }}
-              onClick={startGame}
-              whileTap={{ scale: 0.95 }}
-            >
-              🧩 퍼즐 시작!
+            <motion.button className="w-full py-4 rounded-xl text-white"
+              style={{background:"linear-gradient(180deg,#FF8C00,#E8740C)",border:"3px solid #B8560B",boxShadow:"0 4px 12px rgba(232,116,12,0.4)",fontSize:20}}
+              onClick={startGame} whileTap={{scale:0.95}}>
+              🧩 조립 시작!
             </motion.button>
           </motion.div>
         </div>
       )}
 
-      {/* Playing */}
-      {phase === "playing" && (
+      {(phase==="playing"||phase==="clearing")&&(
         <>
-          {/* HUD */}
-          <div className="px-4 pt-3 pb-1 flex items-center justify-between">
-            <div>
-              <span style={{ fontSize: 10, color: "#8B4513" }}>이동 횟수</span>
-              <p style={{ fontSize: 20, color: "#5C3317" }}>{moves}</p>
-            </div>
-            <div className="text-center">
-              <span style={{ fontSize: 10, color: "#8B4513" }}>맞춘 조각</span>
-              <p style={{ fontSize: 20, color: "#E8740C" }}>
-                {lockedCount}/{TOTAL}
-              </p>
-            </div>
-            <div className="text-right">
-              <span style={{ fontSize: 10, color: "#8B4513" }}>시간</span>
-              <p style={{ fontSize: 20, color: "#5C3317" }}>
-                {Math.floor(timer / 60)}:{String(timer % 60).padStart(2, "0")}
-              </p>
-            </div>
+          <div className="px-3 pt-3 pb-1 flex items-center justify-between">
+            <div><span style={{fontSize:10,color:"#8B4513"}}>SCORE</span><p style={{fontSize:18,color:"#5C3317"}}>{score.toLocaleString()}</p></div>
+            <div className="text-center"><span style={{fontSize:10,color:"#8B4513"}}>LEVEL</span><p style={{fontSize:18,color:"#E8740C"}}>{level}</p></div>
+            <div className="text-right"><span style={{fontSize:10,color:"#8B4513"}}>COMBO</span><p style={{fontSize:18,color:combo>0?"#FF4444":"#5C3317"}}>{combo}x</p></div>
           </div>
 
-          {/* Progress */}
-          <div className="px-4 mb-2">
+          <div className="px-3 mb-1">
             <div className="flex items-center gap-2">
-              <div
-                className="flex-1 h-3 rounded-full overflow-hidden"
-                style={{ background: "rgba(0,0,0,0.1)", border: "1px solid #8B6914" }}
-              >
-                <motion.div
-                  className="h-full rounded-full"
-                  style={{ background: "linear-gradient(90deg, #4CAF50, #66BB6A)" }}
-                  animate={{ width: `${progress}%` }}
-                  transition={{ type: "spring", stiffness: 200 }}
-                />
+              <span style={{fontSize:11,color:"#8B4513"}}>{lines}/{GOAL_LINES}줄</span>
+              <div className="flex-1 h-3 rounded-full overflow-hidden" style={{background:"rgba(0,0,0,0.1)",border:"1px solid #8B6914"}}>
+                <motion.div className="h-full rounded-full" style={{background:"linear-gradient(90deg,#4CAF50,#66BB6A)"}}
+                  animate={{width:`${(lines/GOAL_LINES)*100}%`}} transition={{type:"spring",stiffness:200}}/>
               </div>
-              <span style={{ fontSize: 11, color: "#4CAF50" }}>{Math.round(progress)}%</span>
+              <span style={{fontSize:11,color:"#4CAF50"}}>{Math.round((lines/GOAL_LINES)*100)}%</span>
             </div>
           </div>
 
-          {/* Reference image (small) */}
-          <div className="px-4 mb-2 flex items-center gap-2">
-            <div
-              className="grid gap-px rounded overflow-hidden"
-              style={{
-                gridTemplateColumns: `repeat(${GRID}, 1fr)`,
-                width: 52,
-                height: 52,
-                border: "1.5px solid #8B6914",
-                flexShrink: 0,
-              }}
-            >
-              {Array.from({ length: TOTAL }, (_, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-center"
-                  style={{
-                    background: PIECE_COLORS[getRow(i)][getCol(i)],
-                  }}
-                >
-                  <span style={{ fontSize: 6 }}>{PIECE_LABELS[getRow(i)][getCol(i)]}</span>
-                </div>
-              ))}
-            </div>
-            <span style={{ fontSize: 11, color: "#8B4513" }}>← 완성 모습</span>
-            <div style={{ flex: 1 }} />
-            <motion.button
-              className="px-3 py-1.5 rounded-lg"
-              style={{
-                background: "rgba(139,69,19,0.1)",
-                border: "1.5px solid #8B6914",
-                fontSize: 11,
-                color: "#8B4513",
-              }}
-              onClick={showHint}
-              whileTap={{ scale: 0.9 }}
-            >
-              💡 힌트
-            </motion.button>
-          </div>
+          <div className="flex-1 flex mx-2 mb-1 gap-2 min-h-0">
+            <div className="flex-1 relative rounded-lg overflow-hidden"
+              style={{background:"linear-gradient(180deg,#1a0a2e,#2d1b4e)",border:"3px solid #8B6914",boxShadow:"inset 0 0 20px rgba(0,0,0,0.5)"}}>
+              <div className="absolute inset-0 opacity-10">
+                {Array.from({length:COLS-1},(_,i)=>(
+                  <div key={`v${i}`} className="absolute top-0 bottom-0" style={{left:`${((i+1)/COLS)*100}%`,width:1,background:"#fff"}}/>
+                ))}
+                {Array.from({length:ROWS-1},(_,i)=>(
+                  <div key={`h${i}`} className="absolute left-0 right-0" style={{top:`${((i+1)/ROWS)*100}%`,height:1,background:"#fff"}}/>
+                ))}
+              </div>
 
-          {/* Puzzle grid */}
-          <div className="flex-1 flex items-center justify-center px-4 mb-2">
-            <div
-              className="grid gap-1 w-full max-w-xs aspect-square"
-              style={{ gridTemplateColumns: `repeat(${GRID}, 1fr)` }}
-            >
-              {Array.from({ length: TOTAL }, (_, pos) => {
-                const piece = getPieceAt(pos);
-                if (!piece) return null;
-                const correctRow = getRow(piece.id);
-                const correctCol = getCol(piece.id);
-                const isSelected = selected === pos;
-                const isLocked = piece.locked;
-                const isJustLocked = justLocked.includes(piece.id);
-                const showHintHighlight = hintShown && !isLocked;
-
+              {dg.map((row,r)=>row.map((cell,c)=>{
+                if (cell===null) return null;
+                const isClr = clearFx.includes(r);
+                const isG = cell===("ghost" as any);
+                const ci = isG ? cur.colorIdx : (cell as number);
+                const col = COLORS[ci];
                 return (
-                  <motion.button
-                    key={pos}
-                    className="relative aspect-square rounded-lg flex items-center justify-center overflow-hidden"
-                    style={{
-                      background: isLocked
-                        ? PIECE_COLORS[correctRow][correctCol]
-                        : `${PIECE_COLORS[correctRow][correctCol]}CC`,
-                      border: isSelected
-                        ? "3px solid #FF8C00"
-                        : isLocked
-                        ? "2px solid rgba(255,255,255,0.5)"
-                        : showHintHighlight
-                        ? "2px dashed #FF4444"
-                        : "2px solid rgba(139,105,20,0.3)",
-                      boxShadow: isSelected
-                        ? "0 0 12px rgba(255,140,0,0.6)"
-                        : isJustLocked
-                        ? "0 0 15px rgba(76,175,80,0.8)"
-                        : "0 2px 4px rgba(0,0,0,0.1)",
-                      cursor: isLocked ? "default" : "pointer",
-                      opacity: isLocked ? 1 : 0.9,
-                    }}
-                    onClick={() => handlePieceTap(pos)}
-                    whileTap={isLocked ? {} : { scale: 0.92 }}
-                    animate={
-                      isJustLocked
-                        ? { scale: [1, 1.15, 1], rotate: [0, 5, -5, 0] }
-                        : isSelected
-                        ? { scale: [1, 1.05, 1] }
-                        : {}
-                    }
-                    transition={
-                      isJustLocked
-                        ? { duration: 0.5 }
-                        : isSelected
-                        ? { duration: 0.6, repeat: Infinity }
-                        : {}
-                    }
-                    layout
-                  >
-                    <span style={{ fontSize: 28, filter: isLocked ? "none" : "saturate(0.7)" }}>
-                      {PIECE_LABELS[correctRow][correctCol]}
-                    </span>
-
-                    {/* 조각 번호 (힌트) */}
-                    {hintShown && !isLocked && (
-                      <motion.div
-                        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center"
-                        style={{ background: "#FF4444", fontSize: 8, color: "#fff" }}
-                        initial={{ scale: 0 }}
-                        animate={{ scale: 1 }}
-                      >
-                        {piece.id + 1}
-                      </motion.div>
-                    )}
-
-                    {/* 잠금 표시 */}
-                    {isLocked && (
-                      <motion.div
-                        className="absolute top-0.5 left-0.5"
-                        initial={{ scale: 0 }}
-                        animate={{ scale: 1 }}
-                      >
-                        <span style={{ fontSize: 10 }}>✅</span>
-                      </motion.div>
-                    )}
-                  </motion.button>
+                  <motion.div key={`${r}-${c}`} className="absolute rounded-sm"
+                    style={{left:`${(c/COLS)*100}%`,top:`${(r/ROWS)*100}%`,width:`${100/COLS}%`,height:`${100/ROWS}%`,padding:1}}
+                    animate={isClr?{opacity:[1,0],scale:[1,1.3]}:{}} transition={isClr?{duration:0.25}:{}}>
+                    <div className="size-full rounded-sm" style={{
+                      background:isG?`${col}30`:`linear-gradient(135deg,${col},${col}CC)`,
+                      border:isG?`1px dashed ${col}60`:`1px solid ${col}`,
+                      boxShadow:isG?"none":`inset 0 1px 2px rgba(255,255,255,0.3), 0 1px 3px rgba(0,0,0,0.3)`
+                    }}/>
+                  </motion.div>
                 );
-              })}
+              }))}
+
+              <AnimatePresence>
+                {clearFx.map(row=>(
+                  <motion.div key={`cl-${row}`} className="absolute left-0 right-0"
+                    style={{top:`${(row/ROWS)*100}%`,height:`${100/ROWS}%`,background:"rgba(255,255,255,0.8)"}}
+                    initial={{opacity:1,scaleX:1}} animate={{opacity:0,scaleX:1.1}} exit={{opacity:0}} transition={{duration:0.3}}/>
+                ))}
+              </AnimatePresence>
+            </div>
+
+            <div className="flex flex-col gap-2" style={{width:65}}>
+              <div className="p-2 rounded-lg" style={{background:"rgba(92,51,23,0.1)",border:"2px solid #8B6914"}}>
+                <span className="block text-center mb-1" style={{fontSize:9,color:"#8B4513"}}>NEXT</span>
+                <div className="relative mx-auto" style={{width:44,height:44}}>
+                  {next.shape.map(([r,c],i)=>(
+                    <div key={i} className="absolute rounded-sm"
+                      style={{width:10,height:10,left:c*11+2,top:r*11+6,background:COLORS[next.colorIdx],
+                        border:`1px solid ${COLORS[next.colorIdx]}`,boxShadow:"inset 0 1px 2px rgba(255,255,255,0.3)"}}/>
+                  ))}
+                </div>
+              </div>
+              <div className="flex-1 rounded-lg p-2 flex flex-col items-center justify-center"
+                style={{background:"rgba(255,248,220,0.8)",border:"2px solid #8B6914"}}>
+                <div className="relative" style={{width:40,height:50}}>
+                  <div className="absolute rounded-lg" style={{left:8,top:18,width:24,height:30,background:lines>=2?"#8B4513":"#ddd",transition:"background 0.5s"}}/>
+                  <div className="absolute rounded-full" style={{left:10,top:2,width:20,height:18,background:lines>=4?"#DC143C":"#ddd",transition:"background 0.5s"}}/>
+                  <div style={{position:"absolute",left:30,top:8,width:0,height:0,borderTop:"4px solid transparent",borderBottom:"4px solid transparent",
+                    borderLeft:`8px solid ${lines>=6?"#FFD700":"#ddd"}`,transition:"border-color 0.5s"}}/>
+                  <div className="absolute rounded" style={{left:2,top:22,width:10,height:16,background:lines>=8?"#654321":"#ddd",transition:"background 0.5s"}}/>
+                  {lines>=4&&<div className="absolute rounded-full" style={{left:16,top:7,width:5,height:5,background:"#fff",border:"1.5px solid #333"}}/>}
+                </div>
+                <span style={{fontSize:8,color:"#8B4513",marginTop:4}}>
+                  {lines<2?"몸통...":lines<4?"머리...":lines<6?"부리...":lines<8?"날개...":lines<10?"거의 완성!":"완성!"}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Bottom status */}
-          <div className="px-4 pb-4">
-            <div
-              className="p-3 rounded-xl text-center"
-              style={{ background: "rgba(139,69,19,0.08)", border: "1px solid #8B691466" }}
-            >
-              {selected !== null ? (
-                <p style={{ fontSize: 13, color: "#E8740C" }}>
-                  🔸 바꿀 조각을 선택하세요!
-                </p>
-              ) : lockedCount < 4 ? (
-                <p style={{ fontSize: 13, color: "#8B4513" }}>
-                  🧩 조각을 터치해서 자리를 바꿔보세요!
-                </p>
-              ) : lockedCount < 10 ? (
-                <p style={{ fontSize: 13, color: "#4CAF50" }}>
-                  👍 잘하고 있어요! {TOTAL - lockedCount}조각 남았어요!
-                </p>
-              ) : (
-                <p style={{ fontSize: 13, color: "#FF8C00" }}>
-                  🔥 거의 다 맞췄어요! 조금만 더!
-                </p>
-              )}
+          <div className="px-2 pb-3">
+            <div className="flex gap-1.5 items-center justify-center">
+              {([
+                {emoji:"⬅️",fn:moveLeft},
+                {emoji:"⬇️",fn:()=>{sfxSoftDrop();moveDown();}},
+                {emoji:"➡️",fn:moveRight},
+              ] as const).map(({emoji,fn},i)=>(
+                <motion.button key={i} className="flex items-center justify-center rounded-xl"
+                  style={{width:56,height:56,background:"linear-gradient(180deg,#C4A67A,#A0845A)",border:"2px solid #8B6914",boxShadow:"0 3px 0 #654321"}}
+                  onClick={fn} whileTap={{scale:0.9,y:2}}>
+                  <span style={{fontSize:22}}>{emoji}</span>
+                </motion.button>
+              ))}
+              <div style={{width:8}}/>
+              <motion.button className="flex items-center justify-center rounded-xl"
+                style={{width:56,height:56,background:"linear-gradient(180deg,#4ECDC4,#3BAFA8)",border:"2px solid #2E8B7A",boxShadow:"0 3px 0 #1A6B5A"}}
+                onClick={rotate} whileTap={{scale:0.9,y:2}}>
+                <span style={{fontSize:22}}>🔄</span>
+              </motion.button>
+              <motion.button className="flex items-center justify-center rounded-xl"
+                style={{width:56,height:56,background:"linear-gradient(180deg,#FF8C00,#E8740C)",border:"2px solid #B8560B",boxShadow:"0 3px 0 #8B4000"}}
+                onClick={hardDrop} whileTap={{scale:0.9,y:2}}>
+                <span style={{fontSize:22}}>💥</span>
+              </motion.button>
             </div>
           </div>
         </>
       )}
 
-      {/* Complete */}
       <AnimatePresence>
-        {phase === "complete" && (
-          <motion.div
-            className="absolute inset-0 z-30 flex items-center justify-center"
-            style={{ background: "rgba(255,248,220,0.95)" }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            <motion.div
-              className="text-center px-6"
-              initial={{ scale: 0, rotate: -10 }}
-              animate={{ scale: 1, rotate: 0 }}
-              transition={{ type: "spring", stiffness: 200 }}
-            >
-              {/* 완성된 퍼즐 */}
-              <motion.div
-                className="mx-auto mb-4"
-                style={{ width: 160 }}
-                animate={{ rotate: [0, 2, -2, 0] }}
-                transition={{ duration: 2, repeat: Infinity }}
-              >
-                <div
-                  className="grid gap-0.5 rounded-xl overflow-hidden"
-                  style={{
-                    gridTemplateColumns: `repeat(${GRID}, 1fr)`,
-                    border: "3px solid #FFD700",
-                    boxShadow: "0 0 20px rgba(255,215,0,0.5)",
-                  }}
-                >
-                  {Array.from({ length: TOTAL }, (_, i) => (
-                    <motion.div
-                      key={i}
-                      className="flex items-center justify-center aspect-square"
-                      style={{ background: PIECE_COLORS[getRow(i)][getCol(i)] }}
-                      initial={{ scale: 0, rotate: 180 }}
-                      animate={{ scale: 1, rotate: 0 }}
-                      transition={{ delay: i * 0.05, type: "spring" }}
-                    >
-                      <span style={{ fontSize: 16 }}>{PIECE_LABELS[getRow(i)][getCol(i)]}</span>
-                    </motion.div>
-                  ))}
-                </div>
-              </motion.div>
-
-              <motion.span
-                style={{ fontSize: 50 }}
-                animate={{ rotate: [0, 10, -10, 0], scale: [1, 1.2, 1] }}
-                transition={{ duration: 0.8, repeat: 3 }}
-              >
-                🎉
-              </motion.span>
-              <p style={{ fontSize: 26, color: "#5C3317", marginTop: 8 }}>조립 완료!</p>
-              <p style={{ fontSize: 15, color: "#8B4513", marginTop: 4 }}>
-                {moves}번 이동 · {Math.floor(timer / 60)}:{String(timer % 60).padStart(2, "0")}
+        {phase==="gameover"&&(
+          <motion.div className="absolute inset-0 z-30 flex items-center justify-center"
+            style={{background:"rgba(92,51,23,0.85)"}} initial={{opacity:0}} animate={{opacity:1}}>
+            <motion.div className="text-center p-6 rounded-2xl mx-6"
+              style={{background:"rgba(255,248,220,0.95)",border:"3px solid #8B6914"}}
+              initial={{scale:0}} animate={{scale:1}} transition={{type:"spring"}}>
+              <motion.span style={{fontSize:50,display:"block"}} animate={{rotate:[0,-10,10,-10,0]}} transition={{duration:0.6,repeat:2}}>😵</motion.span>
+              <h3 style={{fontSize:22,color:"#5C3317",marginTop:8}}>블록이 가득 찼어요!</h3>
+              <p style={{fontSize:14,color:"#8B4513",marginTop:8}}>{lines}/{GOAL_LINES}줄 클리어</p>
+              <p style={{fontSize:13,color:"#FF4444",marginTop:4,lineHeight:1.6}}>
+                {GOAL_LINES}줄을 클리어해야<br/>다음 단계로 갈 수 있어요!
               </p>
+              <motion.button className="w-full py-4 rounded-xl text-white mt-5"
+                style={{background:"linear-gradient(180deg,#FF8C00,#E8740C)",border:"3px solid #B8560B",boxShadow:"0 4px 12px rgba(232,116,12,0.4)",fontSize:18}}
+                onClick={startGame} whileTap={{scale:0.95}} initial={{y:10,opacity:0}} animate={{y:0,opacity:1}} transition={{delay:0.5}}>
+                🔄 다시 도전!
+              </motion.button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-              {/* Confetti */}
-              {Array.from({ length: 20 }, (_, i) => (
-                <motion.div
-                  key={i}
-                  className="absolute rounded-full"
-                  style={{
-                    width: 8 + Math.random() * 8,
-                    height: 8 + Math.random() * 8,
-                    background: ["#FF6B6B", "#FFD700", "#4CAF50", "#2196F3", "#FF8C00", "#C084FC"][i % 6],
-                    left: `${Math.random() * 100}%`,
-                    top: -20,
-                  }}
-                  animate={{
-                    y: [0, 600 + Math.random() * 200],
-                    x: [0, (Math.random() - 0.5) * 200],
-                    rotate: [0, 360 * (Math.random() > 0.5 ? 1 : -1)],
-                    opacity: [1, 0],
-                  }}
-                  transition={{
-                    duration: 2 + Math.random(),
-                    delay: Math.random() * 0.5,
-                    ease: "easeOut",
-                  }}
-                />
-              ))}
+      <AnimatePresence>
+        {phase==="complete"&&(
+          <motion.div className="absolute inset-0 z-30 flex items-center justify-center"
+            style={{background:"rgba(255,248,220,0.9)"}} initial={{opacity:0}} animate={{opacity:1}}>
+            <motion.div className="text-center" initial={{scale:0,rotate:-10}} animate={{scale:1,rotate:0}} transition={{type:"spring",stiffness:200}}>
+              <motion.span style={{fontSize:60}} animate={{rotate:[0,10,-10,0]}} transition={{duration:0.5,repeat:3}}>🎉</motion.span>
+              <p style={{fontSize:26,color:"#5C3317",marginTop:8}}>조립 완료!</p>
+              <p style={{fontSize:15,color:"#8B4513",marginTop:4}}>{GOAL_LINES}줄 클리어! · {pieces}개 블록 사용</p>
+              <p style={{fontSize:18,color:"#E8740C",marginTop:4}}>점수: {score.toLocaleString()}</p>
             </motion.div>
           </motion.div>
         )}
