@@ -49,6 +49,11 @@ const MISTAP_DEDUCTION = 50;
 const NOTE_MISS_DEDUCTION = 35;
 const INPUT_TIMING_OFFSET_MS = 35;
 const LATE_HIT_BONUS_WINDOW_MS = 80;
+const JUDGE_GAIN_SCORES: Record<Exclude<HitJudge, "MISS">, number> = {
+  PERFECT: 14,
+  GREAT: 10,
+  GOOD: 6,
+};
 
 const JUDGE_ACCURACY_SCORES: Record<HitJudge, number> = {
   PERFECT: 100,
@@ -168,7 +173,7 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
   const [timelineMs, setTimelineMs] = useState(0);
   const [trackDurationMs, setTrackDurationMs] = useState(0);
 
-  const [score, setScore] = useState(RHYTHM_STAGE_MAX_SCORE);
+  const [score, setScore] = useState(0);
   const [finalScore, setFinalScore] = useState(0);
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
@@ -194,7 +199,7 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
   const notesRef = useRef<Note[]>([]);
   const comboRef = useRef(0);
   const maxComboRef = useRef(0);
-  const scoreRef = useRef(RHYTHM_STAGE_MAX_SCORE);
+  const scoreRef = useRef(0);
   const effectIdRef = useRef(0);
   const flashIdRef = useRef(0);
   const endGuardRef = useRef(false);
@@ -427,6 +432,7 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
         setEffects((prev) => prev.filter((effect) => effect.id !== effectId));
       });
       triggerImpactFX(lane, judge);
+      applyScoreDelta(JUDGE_GAIN_SCORES[judge]);
     },
     [phase, scheduleCountdownTimer, triggerImpactFX, applyScoreDelta]
   );
@@ -451,10 +457,10 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
 
       comboRef.current = 0;
       maxComboRef.current = 0;
-      scoreRef.current = RHYTHM_STAGE_MAX_SCORE;
+      scoreRef.current = 0;
       setCombo(0);
       setMaxCombo(0);
-      setScore(RHYTHM_STAGE_MAX_SCORE);
+      setScore(0);
       setFinalScore(0);
       setProgress(0);
       setTimelineMs(0);
