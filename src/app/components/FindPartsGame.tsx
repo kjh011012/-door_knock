@@ -435,30 +435,30 @@ function applyMove(
 }
 
 const EASY_TUNING: DifficultyTuning = {
-  roundOrder: ["easy1", "easy1", "easy2", "easy2", "easy2", "easy2"],
+  roundOrder: ["easy1", "easy2", "mid1", "mid1", "mid2", "hard1"],
   moveRanges: {
-    easy1: [3, 5],
-    easy2: [5, 7],
-    mid1: [8, 10],
-    mid2: [10, 12],
-    hard1: [11, 13],
-    hard2: [12, 14],
+    easy1: [5, 7],
+    easy2: [7, 10],
+    mid1: [10, 13],
+    mid2: [13, 16],
+    hard1: [15, 18],
+    hard2: [16, 19],
   },
   scrambleSettings: {
-    easy1: { base: 1, randomSpan: 4, attemptScale: 0.12 },
-    easy2: { base: 1, randomSpan: 6, attemptScale: 0.16 },
-    mid1: { base: 3, randomSpan: 10, attemptScale: 0.2 },
-    mid2: { base: 4, randomSpan: 12, attemptScale: 0.24 },
-    hard1: { base: 5, randomSpan: 13, attemptScale: 0.26 },
-    hard2: { base: 6, randomSpan: 14, attemptScale: 0.28 },
+    easy1: { base: 2, randomSpan: 7, attemptScale: 0.18 },
+    easy2: { base: 3, randomSpan: 10, attemptScale: 0.22 },
+    mid1: { base: 4, randomSpan: 14, attemptScale: 0.26 },
+    mid2: { base: 5, randomSpan: 16, attemptScale: 0.29 },
+    hard1: { base: 6, randomSpan: 18, attemptScale: 0.32 },
+    hard2: { base: 7, randomSpan: 20, attemptScale: 0.34 },
   },
   diversityTargets: {
-    easy1: 8,
-    easy2: 10,
-    mid1: 12,
-    mid2: 13,
-    hard1: 14,
-    hard2: 15,
+    easy1: 10,
+    easy2: 12,
+    mid1: 14,
+    mid2: 15,
+    hard1: 17,
+    hard2: 18,
   },
 };
 
@@ -1321,13 +1321,22 @@ function createProgressiveRounds(seed: number, tuning: DifficultyTuning): Puzzle
   return deterministicRounds;
 }
 
-function softenRoundForEasy(round: PuzzleRound): PuzzleRound {
+function softenRoundForEasy(round: PuzzleRound, roundIndex: number): PuzzleRound {
   let pieces = clonePieces(round.pieces);
   let minMoves = solveMinMoves(pieces);
   if (minMoves <= 0) return { ...round, pieces, parMoves: round.parMoves };
 
+  const targetMovesByRound = [8, 11, 14, 17, 19, 21];
+  const maxRemovalsByRound = [1, 1, 0, 0, 0, 0];
+  const targetMoves =
+    targetMovesByRound[clamp(roundIndex, 0, targetMovesByRound.length - 1)];
+  const maxRemovals =
+    maxRemovalsByRound[clamp(roundIndex, 0, maxRemovalsByRound.length - 1)];
+
   const removablePriority = ["f", "e", "d", "p", "c", "b", "a", "o"];
+  let removedCount = 0;
   for (const pieceId of removablePriority) {
+    if (removedCount >= maxRemovals) break;
     const exists = pieces.some((piece) => piece.id === pieceId && !piece.isTarget);
     if (!exists) continue;
 
@@ -1339,14 +1348,110 @@ function softenRoundForEasy(round: PuzzleRound): PuzzleRound {
 
     pieces = candidate;
     minMoves = candidateMoves;
-    if (minMoves <= 5) break;
+    removedCount++;
+    if (minMoves <= targetMoves) break;
   }
 
-  const easedParMoves = Math.max(3, minMoves > 0 ? minMoves : round.parMoves);
+  const easedParMoves = Math.max(
+    4,
+    minMoves > 0 ? Math.max(minMoves, targetMoves - 1) : round.parMoves
+  );
   return {
     ...round,
     pieces,
     parMoves: easedParMoves,
+  };
+}
+
+function getTargetOpeningMetrics(pieces: PuzzlePiece[]): {
+  distanceToExit: number;
+  blockersAhead: number;
+} {
+  const target = pieces.find((piece) => piece.isTarget);
+  if (!target) {
+    return { distanceToExit: 0, blockersAhead: 0 };
+  }
+
+  const occupancy = getOccupancy(pieces, target.id);
+  let blockersAhead = 0;
+  for (let col = target.col + target.len; col <= EXIT_COL; col++) {
+    if (occupancy[target.row][col] !== null) {
+      blockersAhead++;
+    }
+  }
+
+  const targetRightEdge = target.col + target.len - 1;
+  const distanceToExit = Math.max(0, EXIT_COL - targetRightEdge);
+  return { distanceToExit, blockersAhead };
+}
+
+function rebalanceEarlyRoundOpening(
+  round: PuzzleRound,
+  roundIndex: number,
+  rng: () => number
+): PuzzleRound {
+  if (roundIndex !== 1 && roundIndex !== 2) return round;
+
+  const requiredDistance = 2;
+  const requiredBlockers = 1;
+  const isAcceptable = (pieces: PuzzlePiece[]) => {
+    const metrics = getTargetOpeningMetrics(pieces);
+    return (
+      metrics.distanceToExit >= requiredDistance &&
+      metrics.blockersAhead >= requiredBlockers
+    );
+  };
+
+  let bestPieces = clonePieces(round.pieces);
+  let bestMinMoves = solveMinMoves(bestPieces);
+  let bestPenalty = Number.POSITIVE_INFINITY;
+
+  const evaluatePenalty = (pieces: PuzzlePiece[], minMoves: number): number => {
+    const metrics = getTargetOpeningMetrics(pieces);
+    const distancePenalty = Math.max(0, requiredDistance - metrics.distanceToExit) * 12;
+    const blockerPenalty = Math.max(0, requiredBlockers - metrics.blockersAhead) * 10;
+    const movePenalty = Math.abs(minMoves - round.parMoves) * 0.35;
+    return distancePenalty + blockerPenalty + movePenalty;
+  };
+
+  const consider = (candidate: PuzzlePiece[]): PuzzleRound | null => {
+    const minMoves = solveMinMoves(candidate);
+    if (minMoves < 1) return null;
+
+    if (isAcceptable(candidate)) {
+      return {
+        ...round,
+        pieces: clonePieces(candidate),
+        parMoves: minMoves,
+      };
+    }
+
+    const penalty = evaluatePenalty(candidate, minMoves);
+    if (penalty < bestPenalty) {
+      bestPenalty = penalty;
+      bestPieces = clonePieces(candidate);
+      bestMinMoves = minMoves;
+    }
+    return null;
+  };
+
+  const immediate = consider(bestPieces);
+  if (immediate) return immediate;
+
+  for (let attempt = 0; attempt < 220; attempt++) {
+    const steps =
+      4 +
+      Math.floor(rng() * 12) +
+      Math.floor(attempt * 0.12);
+    const candidate = scramblePieces(round.pieces, rng, steps);
+    const accepted = consider(candidate);
+    if (accepted) return accepted;
+  }
+
+  return {
+    ...round,
+    pieces: bestPieces,
+    parMoves: bestMinMoves > 0 ? bestMinMoves : round.parMoves,
   };
 }
 
@@ -1388,10 +1493,14 @@ function buildSession(seedText: string, mode: DifficultyMode): {
   const seedBase = hashSeed(seedText);
   const tuning = mode === "easy" ? EASY_TUNING : HELL_TUNING;
   const generatedRounds = createProgressiveRounds(seedBase, tuning);
-  const rounds =
+  const baseRounds =
     mode === "easy"
-      ? generatedRounds.map((round) => softenRoundForEasy(round))
+      ? generatedRounds.map((round, index) => softenRoundForEasy(round, index))
       : generatedRounds;
+  const openingRng = createRng(seedBase ^ 0x6a09e667);
+  const rounds = baseRounds.map((round, index) =>
+    rebalanceEarlyRoundOpening(round, index, openingRng)
+  );
   const rng = createRng(seedBase ^ 0x9e3779b9);
   const rewardOrder = shuffleWithRng(WOODPECKER_PARTS, rng);
   return { rounds, rewardOrder };

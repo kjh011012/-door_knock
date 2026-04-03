@@ -74,6 +74,10 @@ export default function App() {
   const showDevSelector =
     typeof window !== "undefined" && new URLSearchParams(window.location.search).get("dev") === "1";
 
+  const sanitizeAgeInput = useCallback((value: string) => {
+    return value.replace(/\D+/g, "").slice(0, 3);
+  }, []);
+
   const updateScore = useCallback((key: keyof GameScores, value: number) => {
     const safeValue = Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
     setScores((prev) => ({ ...prev, [key]: safeValue }));
@@ -332,12 +336,18 @@ export default function App() {
               </p>
 
               <input
-                type="number"
+                type="text"
                 inputMode="numeric"
+                pattern="[0-9]*"
                 min={1}
                 max={120}
                 value={ageInput}
-                onChange={(event) => setAgeInput(event.target.value)}
+                onChange={(event) => setAgeInput(sanitizeAgeInput(event.target.value))}
+                onPaste={(event) => {
+                  event.preventDefault();
+                  const pasted = event.clipboardData.getData("text");
+                  setAgeInput(sanitizeAgeInput(pasted));
+                }}
                 placeholder="나이를 입력하세요"
                 style={{
                   width: "100%",
@@ -369,8 +379,11 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => {
+                    if (!ageInput.trim()) return;
                     const parsedAge = Number(ageInput);
-                    const safeAge = Number.isFinite(parsedAge) ? Math.max(1, Math.round(parsedAge)) : NaN;
+                    const safeAge = Number.isFinite(parsedAge)
+                      ? Math.min(120, Math.max(1, Math.round(parsedAge)))
+                      : NaN;
                     if (!Number.isFinite(safeAge)) return;
 
                     setPlayerAge(safeAge);
