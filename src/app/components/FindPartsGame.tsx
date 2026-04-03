@@ -435,7 +435,7 @@ function applyMove(
 }
 
 const EASY_TUNING: DifficultyTuning = {
-  roundOrder: ["easy1", "easy1", "easy2", "easy2", "mid1", "mid1"],
+  roundOrder: ["easy1", "easy1", "easy2", "easy2", "easy2", "easy2"],
   moveRanges: {
     easy1: [3, 5],
     easy2: [5, 7],
@@ -1321,6 +1321,35 @@ function createProgressiveRounds(seed: number, tuning: DifficultyTuning): Puzzle
   return deterministicRounds;
 }
 
+function softenRoundForEasy(round: PuzzleRound): PuzzleRound {
+  let pieces = clonePieces(round.pieces);
+  let minMoves = solveMinMoves(pieces);
+  if (minMoves <= 0) return { ...round, pieces, parMoves: round.parMoves };
+
+  const removablePriority = ["f", "e", "d", "p", "c", "b", "a", "o"];
+  for (const pieceId of removablePriority) {
+    const exists = pieces.some((piece) => piece.id === pieceId && !piece.isTarget);
+    if (!exists) continue;
+
+    const candidate = pieces.filter((piece) => piece.id !== pieceId);
+    if (isSolved(candidate)) continue;
+
+    const candidateMoves = solveMinMoves(candidate);
+    if (candidateMoves < 1) continue;
+
+    pieces = candidate;
+    minMoves = candidateMoves;
+    if (minMoves <= 5) break;
+  }
+
+  const easedParMoves = Math.max(3, minMoves > 0 ? minMoves : round.parMoves);
+  return {
+    ...round,
+    pieces,
+    parMoves: easedParMoves,
+  };
+}
+
 function getRoundTargetMoves(roundIdx: number): number {
   return ROUND_SCORE_TARGET_MOVES[clamp(roundIdx, 0, ROUND_SCORE_TARGET_MOVES.length - 1)];
 }
@@ -1358,7 +1387,11 @@ function buildSession(seedText: string, mode: DifficultyMode): {
 } {
   const seedBase = hashSeed(seedText);
   const tuning = mode === "easy" ? EASY_TUNING : HELL_TUNING;
-  const rounds = createProgressiveRounds(seedBase, tuning);
+  const generatedRounds = createProgressiveRounds(seedBase, tuning);
+  const rounds =
+    mode === "easy"
+      ? generatedRounds.map((round) => softenRoundForEasy(round))
+      : generatedRounds;
   const rng = createRng(seedBase ^ 0x9e3779b9);
   const rewardOrder = shuffleWithRng(WOODPECKER_PARTS, rng);
   return { rounds, rewardOrder };
