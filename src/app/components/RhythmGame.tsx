@@ -170,7 +170,9 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
   const [finalScore, setFinalScore] = useState(0);
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
-  const [activeLane, setActiveLane] = useState<number | null>(null);
+  const [activeLanes, setActiveLanes] = useState<boolean[]>(() =>
+    Array.from({ length: LANE_COUNT }, () => false)
+  );
   const [laneEnergy, setLaneEnergy] = useState<number[]>([0, 0, 0]);
   const [cameraKick, setCameraKick] = useState({ x: 0, y: 0, scale: 1 });
   const [screenFlash, setScreenFlash] = useState<ScreenFlash | null>(null);
@@ -347,8 +349,18 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
       if (!audio) return;
 
       sfxRhythmTap(lane);
-      setActiveLane(lane);
-      window.setTimeout(() => setActiveLane((prev) => (prev === lane ? null : prev)), 120);
+      setActiveLanes((prev) => {
+        const next = [...prev];
+        next[lane] = true;
+        return next;
+      });
+      scheduleCountdownTimer(120, () => {
+        setActiveLanes((prev) => {
+          const next = [...prev];
+          next[lane] = false;
+          return next;
+        });
+      });
 
       const elapsed = audio.currentTime * 1000;
       let bestIndex = -1;
@@ -937,15 +949,22 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
                 className="flex-1 py-5 rounded-xl flex items-center justify-center"
                 style={{
                   background:
-                    activeLane === lane
+                    activeLanes[lane]
                       ? `linear-gradient(180deg, ${LANE_COLORS[lane]}, ${LANE_COLORS[lane]}AA)`
                       : `linear-gradient(180deg, ${LANE_COLORS[lane]}CC, ${LANE_COLORS[lane]}88)`,
                   border: `3px solid ${LANE_COLORS[lane]}`,
                   boxShadow: `0 0 ${10 + laneEnergy[lane] * 22}px ${LANE_COLORS[lane]}AA`,
+                  touchAction: "none",
+                  userSelect: "none",
+                  WebkitTapHighlightColor: "transparent",
                 }}
-                onClick={() => handleLaneTap(lane)}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  handleLaneTap(lane);
+                }}
+                onClick={(event) => event.preventDefault()}
                 whileTap={{ scale: 0.9 }}
-                animate={{ y: activeLane === lane ? -4 : 0, scale: 1 + laneEnergy[lane] * 0.06 }}
+                animate={{ y: activeLanes[lane] ? -4 : 0, scale: 1 + laneEnergy[lane] * 0.06 }}
                 transition={{ type: "spring", stiffness: 320, damping: 20 }}
               >
                 <span style={{ fontSize: 28 }}>{LANE_EMOJIS[lane]}</span>
