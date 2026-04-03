@@ -35,20 +35,6 @@ const STAGE_ORDER: GameStage[] = [
   "rhythm",
 ];
 
-const DEBUG_STAGE_OPTIONS: Array<{ value: GameStage; label: string }> = [
-  { value: "splash", label: "splash" },
-  { value: "title", label: "title" },
-  { value: "howto", label: "howto" },
-  { value: "workbench", label: "workbench" },
-  { value: "findParts", label: "findParts" },
-  { value: "assembly", label: "assembly" },
-  { value: "hammer", label: "hammer" },
-  { value: "customize", label: "customize" },
-  { value: "rhythm", label: "rhythm" },
-  { value: "result", label: "result" },
-  { value: "reward", label: "reward" },
-];
-
 export default function App() {
   const [stage, setStage] = useState<GameStage>("splash");
   const [soundOn, setSoundOn] = useState(true);
@@ -71,13 +57,6 @@ export default function App() {
     const safeValue = Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
     setScores((prev) => ({ ...prev, [key]: safeValue }));
   }, []);
-
-  const goToNextStage = useCallback(() => {
-    const currentIndex = STAGE_ORDER.indexOf(stage);
-    if (currentIndex >= 0 && currentIndex < STAGE_ORDER.length - 1) {
-      setStage(STAGE_ORDER[currentIndex + 1]);
-    }
-  }, [stage]);
 
   const handleRestart = useCallback(() => {
     setScores({ findParts: 0, assembly: 0, hammer: 0, rhythm: 0 });
@@ -260,42 +239,6 @@ export default function App() {
           boxShadow: "0 0 40px rgba(0,0,0,0.5)",
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(8px + env(safe-area-inset-top))",
-            right: 8,
-            zIndex: 1000,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "6px 8px",
-            borderRadius: 10,
-            background: "rgba(32,20,12,0.85)",
-            border: "1px solid rgba(255,248,220,0.4)",
-          }}
-        >
-          <span style={{ fontSize: 10, color: "#FFF8DC" }}>DEV</span>
-          <select
-            value={stage}
-            onChange={(event) => setStage(event.target.value as GameStage)}
-            style={{
-              fontSize: 11,
-              padding: "4px 6px",
-              borderRadius: 6,
-              border: "1px solid rgba(255,248,220,0.5)",
-              background: "#FFF8DC",
-              color: "#4A2A14",
-            }}
-          >
-            {DEBUG_STAGE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
         <AnimatePresence mode="wait">
           <motion.div
             key={stage}

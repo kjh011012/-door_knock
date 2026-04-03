@@ -132,8 +132,8 @@ export function WoodpeckerSpriteAnimation({ compact = false }: WoodpeckerSpriteA
         src={timeline[frameIndex].src}
         alt="딱따구리 애니메이션"
         style={{
-          width: compact ? "min(62vw, 220px)" : "min(88vw, 320px)",
-          maxHeight: compact ? "min(24dvh, 180px)" : "min(48dvh, 420px)",
+          width: compact ? "min(56vw, 170px)" : "min(88vw, 320px)",
+          maxHeight: compact ? "min(19dvh, 132px)" : "min(48dvh, 420px)",
           height: "auto",
           objectFit: "contain",
           userSelect: "none",

@@ -94,7 +94,7 @@ export function TitleScreen({ onStart, onHowTo, soundOn, onToggleSound }: TitleS
       {/* Sprite animation area */}
       <motion.div
         className="relative flex items-center justify-center w-full shrink-0"
-        style={{ height: "clamp(132px, 24vh, 220px)" }}
+        style={{ height: "clamp(106px, 19vh, 168px)" }}
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ delay: 0.3, duration: 0.6 }}
