@@ -469,9 +469,24 @@ export function CustomizeScreen({ onComplete, soundOn }: CustomizeScreenProps) {
         fontFamily: "'Jua', sans-serif",
       }}
     >
-      <div className="px-4 pt-4 pb-2 text-center">
-        <h2 style={{ fontSize: 22, color: "#5C3317" }}>🎨 컬러링 타임</h2>
-        <p style={{ fontSize: 13, color: "#8B4513" }}>
+      <div className="px-4 pt-4 pb-2">
+        <div className="flex items-center justify-between gap-3">
+          <h2 style={{ fontSize: 22, color: "#5C3317" }}>🎨 컬러링 타임</h2>
+          <motion.button
+            className="px-4 py-2 rounded-lg text-white shrink-0"
+            style={{
+              background: "linear-gradient(180deg, #FF8C00, #E8740C)",
+              border: "2px solid #B8560B",
+              boxShadow: "0 2px 8px rgba(232,116,12,0.34)",
+              fontSize: 14,
+            }}
+            onClick={() => onComplete(custom)}
+            whileTap={{ scale: 0.96 }}
+          >
+            다음으로
+          </motion.button>
+        </div>
+        <p style={{ fontSize: 13, color: "#8B4513", marginTop: 4 }}>
           마음껏 색칠해 보세요! 브러시로 칠하고, 지우개로 다듬을 수 있어요.
         </p>
       </div>
@@ -696,24 +711,6 @@ export function CustomizeScreen({ onComplete, soundOn }: CustomizeScreenProps) {
         </motion.div>
       </div>
 
-      <div
-        className="px-4 pt-3 shrink-0"
-        style={{ paddingBottom: "max(16px, calc(env(safe-area-inset-bottom) + 10px))" }}
-      >
-        <motion.button
-          className="w-full py-4 rounded-xl text-white"
-          style={{
-            background: "linear-gradient(180deg, #FF8C00, #E8740C)",
-            border: "3px solid #B8560B",
-            boxShadow: "0 4px 12px rgba(232,116,12,0.4)",
-            fontSize: 18,
-          }}
-          onClick={() => onComplete(custom)}
-          whileTap={{ scale: 0.96 }}
-        >
-          ✅ 색칠 완료하고 다음으로
-        </motion.button>
-      </div>
     </div>
   );
 }
