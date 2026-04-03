@@ -7,7 +7,7 @@ import blockTexture1 from "../../assets/woodpecker/blk1.png";
 import blockTexture2 from "../../assets/woodpecker/blk2.png";
 import blockTexture3 from "../../assets/woodpecker/blk3.png";
 import blockTexture4 from "../../assets/woodpecker/blk4.png";
-import woodBlockBgmTrack from "../../assets/woodpecker/나무블럭 속삭임.mp3";
+import woodBlockBgmTrack from "../../assets/woodpecker/woodblock-bgm.mp3";
 import {
   startBGM,
   stopBGM,

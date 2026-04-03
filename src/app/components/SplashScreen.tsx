@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import landingImage from "../../assets/woodpecker/딱따구리랜딩.png";
+import landingImage from "../../assets/woodpecker/landing-woodpecker.png";
 
 const loadingMessages = [
   "나무를 준비하고 있어요… 🪵",

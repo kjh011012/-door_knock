@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import moleTrack from "../../assets/woodpecker/두더지게임.mp3";
+import moleTrack from "../../assets/woodpecker/mole-bgm.mp3";
 import { stopBGM, sfxCountdownTick, sfxHammerBeat, sfxHammerMiss, sfxHammerPeg } from "./tetris-sounds";
 
 interface HammerGameProps {

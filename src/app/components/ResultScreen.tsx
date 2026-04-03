@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import confetti from "canvas-confetti";
-import tiredMoodImage from "../../assets/woodpecker/피곤한.png";
-import smileMoodImage from "../../assets/woodpecker/웃고있는.png";
-import joyMoodImage from "../../assets/woodpecker/즐거운.png";
-import hypeMoodImage from "../../assets/woodpecker/아주신나는.png";
+import tiredMoodImage from "../../assets/woodpecker/mood-tired.png";
+import smileMoodImage from "../../assets/woodpecker/mood-smile.png";
+import joyMoodImage from "../../assets/woodpecker/mood-joy.png";
+import hypeMoodImage from "../../assets/woodpecker/mood-hype.png";
 import { buildScoreSummary, STAGE_SCORE_MAX, TOTAL_SCORE_MAX } from "../utils/score";
 
 interface ResultScreenProps {

@@ -3,7 +3,7 @@
 // 프로젝트 전용 오리지널 무가사 BGM + SFX
 // ============================================
 
-import workshopBgmTrack from "../../assets/woodpecker/딱따구리 도어노크 체험 게임 BGM.mp3";
+import workshopBgmTrack from "../../assets/woodpecker/workshop-bgm.mp3";
 
 let audioCtx: AudioContext | null = null;
 let bgmAudio: HTMLAudioElement | null = null;

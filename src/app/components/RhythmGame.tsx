@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import rhythmTrack from "../../assets/woodpecker/고라데이로 딱딱딱.mp3";
+import rhythmTrack from "../../assets/woodpecker/rhythm-bgm.mp3";
 import { sfxCountdownTick, sfxRhythmTap } from "./tetris-sounds";
 
 interface RhythmGameProps {

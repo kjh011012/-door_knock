@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
-import coloringTemplate from "../../assets/woodpecker/커스터마이징.png";
+import coloringTemplate from "../../assets/woodpecker/customizing-template.png";
 import { DEFAULT_WORKSHOP_BGM, startBGM, stopBGM } from "./tetris-sounds";
 
 interface CustomizeScreenProps {
