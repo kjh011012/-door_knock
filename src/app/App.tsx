@@ -26,6 +26,7 @@ type GameStage =
   | "rhythm"
   | "result"
   | "reward";
+type DifficultyMode = "easy" | "hell";
 
 const STAGE_ORDER: GameStage[] = [
   "findParts",
@@ -51,6 +52,10 @@ const DEBUG_STAGE_OPTIONS: Array<{ value: GameStage; label: string }> = [
 
 export default function App() {
   const [stage, setStage] = useState<GameStage>("splash");
+  const [difficultyMode, setDifficultyMode] = useState<DifficultyMode>("hell");
+  const [playerAge, setPlayerAge] = useState<number | null>(null);
+  const [showAgePrompt, setShowAgePrompt] = useState(false);
+  const [ageInput, setAgeInput] = useState("");
   const [soundOn, setSoundOn] = useState(true);
   const [scores, setScores] = useState<GameScores>({
     findParts: 0,
@@ -147,7 +152,10 @@ export default function App() {
       case "title":
         return (
           <TitleScreen
-            onStart={() => setStage("workbench")}
+            onStart={() => {
+              setAgeInput(playerAge ? String(playerAge) : "");
+              setShowAgePrompt(true);
+            }}
             onHowTo={() => setStage("howto")}
             soundOn={soundOn}
             onToggleSound={handleToggleSound}
@@ -164,6 +172,7 @@ export default function App() {
         return (
           <FindPartsGame
             soundOn={soundOn}
+            difficultyMode={difficultyMode}
             onComplete={(score) => {
               updateScore("findParts", score);
               setStage("assembly");
@@ -290,6 +299,100 @@ export default function App() {
                 </option>
               ))}
             </select>
+          </div>
+        )}
+
+        {showAgePrompt && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 1400,
+              background: "rgba(23,13,8,0.58)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 20,
+            }}
+          >
+            <div
+              style={{
+                width: "100%",
+                maxWidth: 340,
+                borderRadius: 20,
+                background: "linear-gradient(180deg, #FFF8DC, #F3DFC0)",
+                border: "3px solid #8B6914",
+                boxShadow: "0 14px 32px rgba(0,0,0,0.28)",
+                padding: 18,
+              }}
+            >
+              <h3 style={{ fontSize: 22, color: "#5C3317", textAlign: "center" }}>나이 입력</h3>
+              <p style={{ fontSize: 13, color: "#7A4A25", marginTop: 6, textAlign: "center", lineHeight: 1.55 }}>
+                15세 이하는 <strong>easy 모드</strong>,<br />
+                16세 이상은 <strong>hell 모드</strong>로 시작해요.
+              </p>
+
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={120}
+                value={ageInput}
+                onChange={(event) => setAgeInput(event.target.value)}
+                placeholder="나이를 입력하세요"
+                style={{
+                  width: "100%",
+                  marginTop: 14,
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: "2px solid #C9A473",
+                  background: "#FFFDF6",
+                  color: "#4A2A14",
+                  fontSize: 16,
+                  outline: "none",
+                }}
+              />
+
+              <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                <button
+                  onClick={() => setShowAgePrompt(false)}
+                  style={{
+                    flex: 1,
+                    padding: "11px 10px",
+                    borderRadius: 12,
+                    border: "2px solid #B5894B",
+                    background: "#EFD8B1",
+                    color: "#5C3317",
+                    fontSize: 14,
+                  }}
+                >
+                  취소
+                </button>
+                <button
+                  onClick={() => {
+                    const parsedAge = Number(ageInput);
+                    const safeAge = Number.isFinite(parsedAge) ? Math.max(1, Math.round(parsedAge)) : NaN;
+                    if (!Number.isFinite(safeAge)) return;
+
+                    setPlayerAge(safeAge);
+                    setDifficultyMode(safeAge <= 15 ? "easy" : "hell");
+                    setShowAgePrompt(false);
+                    setStage("workbench");
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "11px 10px",
+                    borderRadius: 12,
+                    border: "2px solid #B8560B",
+                    background: "linear-gradient(180deg, #FF8C00, #E8740C)",
+                    color: "#fff",
+                    fontSize: 14,
+                  }}
+                >
+                  시작
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

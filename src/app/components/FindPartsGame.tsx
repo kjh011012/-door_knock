@@ -21,6 +21,7 @@ import {
 interface FindPartsGameProps {
   onComplete: (score: number) => void;
   soundOn?: boolean;
+  difficultyMode?: "easy" | "hell";
 }
 
 type Axis = "h" | "v";
@@ -85,15 +86,13 @@ const ROUND_TIME_LIMIT_MS = 60000;
 const ROUND_SCORE_MAX = 100;
 const FIND_PARTS_STAGE_MAX_SCORE = 2500;
 type DifficultyTier = "easy1" | "easy2" | "mid1" | "mid2" | "hard1" | "hard2";
-
-const ROUND_DIFFICULTY_ORDER: DifficultyTier[] = [
-  "easy1",
-  "easy1",
-  "easy2",
-  "easy2",
-  "mid1",
-  "mid1",
-];
+type DifficultyMode = "easy" | "hell";
+interface DifficultyTuning {
+  roundOrder: DifficultyTier[];
+  moveRanges: Record<DifficultyTier, [number, number]>;
+  scrambleSettings: Record<DifficultyTier, { base: number; randomSpan: number; attemptScale: number }>;
+  diversityTargets: Record<DifficultyTier, number>;
+}
 
 const ROUND_POOLS: Record<DifficultyTier, Array<Omit<PuzzleRound, "id">>> = {
   easy1: [
@@ -306,7 +305,7 @@ const ROUND_POOLS: Record<DifficultyTier, Array<Omit<PuzzleRound, "id">>> = {
   ],
 };
 
-const TOTAL_ROUNDS = ROUND_DIFFICULTY_ORDER.length;
+const TOTAL_ROUNDS = HELL_TUNING.roundOrder.length;
 const BLOCK_TEXTURES = [
   blockTexture0,
   blockTexture1,
@@ -435,34 +434,60 @@ function applyMove(
   );
 }
 
-const TIER_MOVE_RANGES: Record<DifficultyTier, [number, number]> = {
-  easy1: [3, 5],
-  easy2: [5, 7],
-  mid1: [8, 10],
-  mid2: [10, 12],
-  hard1: [11, 13],
-  hard2: [12, 14],
+const EASY_TUNING: DifficultyTuning = {
+  roundOrder: ["easy1", "easy1", "easy2", "easy2", "mid1", "mid1"],
+  moveRanges: {
+    easy1: [3, 5],
+    easy2: [5, 7],
+    mid1: [8, 10],
+    mid2: [10, 12],
+    hard1: [11, 13],
+    hard2: [12, 14],
+  },
+  scrambleSettings: {
+    easy1: { base: 1, randomSpan: 4, attemptScale: 0.12 },
+    easy2: { base: 1, randomSpan: 6, attemptScale: 0.16 },
+    mid1: { base: 3, randomSpan: 10, attemptScale: 0.2 },
+    mid2: { base: 4, randomSpan: 12, attemptScale: 0.24 },
+    hard1: { base: 5, randomSpan: 13, attemptScale: 0.26 },
+    hard2: { base: 6, randomSpan: 14, attemptScale: 0.28 },
+  },
+  diversityTargets: {
+    easy1: 8,
+    easy2: 10,
+    mid1: 12,
+    mid2: 13,
+    hard1: 14,
+    hard2: 15,
+  },
 };
 
-const TIER_SCRAMBLE_SETTINGS: Record<
-  DifficultyTier,
-  { base: number; randomSpan: number; attemptScale: number }
-> = {
-  easy1: { base: 1, randomSpan: 4, attemptScale: 0.12 },
-  easy2: { base: 1, randomSpan: 6, attemptScale: 0.16 },
-  mid1: { base: 3, randomSpan: 10, attemptScale: 0.2 },
-  mid2: { base: 4, randomSpan: 12, attemptScale: 0.24 },
-  hard1: { base: 5, randomSpan: 13, attemptScale: 0.26 },
-  hard2: { base: 6, randomSpan: 14, attemptScale: 0.28 },
-};
-
-const TIER_DIVERSITY_TARGETS: Record<DifficultyTier, number> = {
-  easy1: 8,
-  easy2: 10,
-  mid1: 12,
-  mid2: 13,
-  hard1: 14,
-  hard2: 15,
+const HELL_TUNING: DifficultyTuning = {
+  roundOrder: ["easy1", "easy2", "mid1", "mid2", "hard1", "hard2"],
+  moveRanges: {
+    easy1: [4, 6],
+    easy2: [6, 8],
+    mid1: [13, 16],
+    mid2: [15, 18],
+    hard1: [17, 20],
+    hard2: [19, 22],
+  },
+  scrambleSettings: {
+    easy1: { base: 1, randomSpan: 6, attemptScale: 0.18 },
+    easy2: { base: 2, randomSpan: 8, attemptScale: 0.22 },
+    mid1: { base: 5, randomSpan: 18, attemptScale: 0.28 },
+    mid2: { base: 6, randomSpan: 20, attemptScale: 0.31 },
+    hard1: { base: 7, randomSpan: 22, attemptScale: 0.34 },
+    hard2: { base: 8, randomSpan: 24, attemptScale: 0.37 },
+  },
+  diversityTargets: {
+    easy1: 10,
+    easy2: 12,
+    mid1: 14,
+    mid2: 16,
+    hard1: 18,
+    hard2: 20,
+  },
 };
 
 const TIER_VARIATION_REQUIREMENTS: Record<
@@ -642,8 +667,12 @@ function rangeDistance(value: number, range: [number, number]): number {
   return 0;
 }
 
-function getTierFitScore(tier: DifficultyTier, minMoves: number): number {
-  const range = TIER_MOVE_RANGES[tier];
+function getTierFitScore(
+  tier: DifficultyTier,
+  minMoves: number,
+  moveRanges: DifficultyTuning["moveRanges"]
+): number {
+  const range = moveRanges[tier];
   const distance = rangeDistance(minMoves, range);
   const targetMid = (range[0] + range[1]) / 2;
   return distance * 10 + Math.abs(minMoves - targetMid);
@@ -698,13 +727,14 @@ function scramblePieces(
 function buildRoundVariant(
   template: Omit<PuzzleRound, "id">,
   tier: DifficultyTier,
+  tuning: DifficultyTuning,
   rng: () => number,
   usedSignatures: Set<string>,
   recentHistoryPieces: PuzzlePiece[][]
 ): RoundVariantCandidate | null {
   let best: RoundVariantCandidate | null = null;
-  const scrambleSettings = TIER_SCRAMBLE_SETTINGS[tier];
-  const diversityTarget = TIER_DIVERSITY_TARGETS[tier];
+  const scrambleSettings = tuning.scrambleSettings[tier];
+  const diversityTarget = tuning.diversityTargets[tier];
 
   const consider = (candidate: PuzzlePiece[], fallbackParMoves: number) => {
     const signature = getPiecesSignature(candidate);
@@ -724,7 +754,7 @@ function buildRoundVariant(
       recentHistoryPieces
     );
     const fitScore =
-      getTierFitScore(tier, minMoves) +
+      getTierFitScore(tier, minMoves, tuning.moveRanges) +
       diversityGap * 1.9 -
       diversityBonus +
       variationPenalty;
@@ -816,15 +846,18 @@ function findUniqueReachableState(
   return null;
 }
 
-function tryCreateProgressiveRounds(seed: number): PuzzleRound[] | null {
+function tryCreateProgressiveRounds(
+  seed: number,
+  tuning: DifficultyTuning
+): PuzzleRound[] | null {
   const rng = createRng(seed ^ 0xa341316c);
   const used = new Set<string>();
   const usedStyleProfiles = new Set<string>();
   const rounds: PuzzleRound[] = [];
 
-  for (let index = 0; index < ROUND_DIFFICULTY_ORDER.length; index++) {
-    const tier = ROUND_DIFFICULTY_ORDER[index];
-    const diversityTarget = TIER_DIVERSITY_TARGETS[tier];
+  for (let index = 0; index < tuning.roundOrder.length; index++) {
+    const tier = tuning.roundOrder[index];
+    const diversityTarget = tuning.diversityTargets[tier];
     const recentHistoryPieces = rounds
       .slice(-2)
       .map((round) => round.pieces);
@@ -835,6 +868,7 @@ function tryCreateProgressiveRounds(seed: number): PuzzleRound[] | null {
       const candidate = buildRoundVariant(
         template,
         tier,
+        tuning,
         rng,
         used,
         recentHistoryPieces
@@ -902,7 +936,7 @@ function tryCreateProgressiveRounds(seed: number): PuzzleRound[] | null {
             parMoves: minMoves,
             signature,
             fitScore:
-              getTierFitScore(tier, minMoves) +
+              getTierFitScore(tier, minMoves, tuning.moveRanges) +
               diversityGap * 1.9 +
               0.5 +
               variationPenalty,
@@ -965,7 +999,7 @@ function tryCreateProgressiveRounds(seed: number): PuzzleRound[] | null {
           parMoves: minMoves,
           signature: getPiecesSignature(reachable),
           fitScore:
-            getTierFitScore(tier, minMoves) +
+            getTierFitScore(tier, minMoves, tuning.moveRanges) +
             diversityGap * 1.9 +
             1 +
             variationPenalty,
@@ -1004,10 +1038,10 @@ function tryCreateProgressiveRounds(seed: number): PuzzleRound[] | null {
   return rounds;
 }
 
-function createProgressiveRounds(seed: number): PuzzleRound[] {
+function createProgressiveRounds(seed: number, tuning: DifficultyTuning): PuzzleRound[] {
   for (let attempt = 0; attempt < 12; attempt++) {
     const attemptSeed = (seed + Math.imul(attempt + 1, 0x9e3779b9)) >>> 0;
-    const rounds = tryCreateProgressiveRounds(attemptSeed);
+    const rounds = tryCreateProgressiveRounds(attemptSeed, tuning);
     if (rounds) return rounds;
   }
 
@@ -1016,9 +1050,9 @@ function createProgressiveRounds(seed: number): PuzzleRound[] {
   const deterministicRounds: PuzzleRound[] = [];
   const deterministicRng = createRng(seed ^ 0x51ed270b);
 
-  for (let index = 0; index < ROUND_DIFFICULTY_ORDER.length; index++) {
-    const tier = ROUND_DIFFICULTY_ORDER[index];
-    const diversityTarget = TIER_DIVERSITY_TARGETS[tier];
+  for (let index = 0; index < tuning.roundOrder.length; index++) {
+    const tier = tuning.roundOrder[index];
+    const diversityTarget = tuning.diversityTargets[tier];
     const recentHistoryPieces = deterministicRounds
       .slice(-2)
       .map((round) => round.pieces);
@@ -1043,7 +1077,7 @@ function createProgressiveRounds(seed: number): PuzzleRound[] {
         parMoves: minMoves,
         signature: getPiecesSignature(reachable),
         fitScore:
-          getTierFitScore(tier, minMoves) +
+          getTierFitScore(tier, minMoves, tuning.moveRanges) +
           diversityGap * 1.9 +
           1 +
           variationPenalty,
@@ -1086,7 +1120,7 @@ function createProgressiveRounds(seed: number): PuzzleRound[] {
                 parMoves: minMoves,
                 signature,
                 fitScore:
-                  getTierFitScore(tier, minMoves) +
+                  getTierFitScore(tier, minMoves, tuning.moveRanges) +
                   diversityGap * 1.9 +
                   1.2 +
                   variationPenalty,
@@ -1158,7 +1192,8 @@ function createProgressiveRounds(seed: number): PuzzleRound[] {
         fitScore:
           getTierFitScore(
             tier,
-            fallbackMoves > 0 ? fallbackMoves : fallbackTemplate.parMoves
+            fallbackMoves > 0 ? fallbackMoves : fallbackTemplate.parMoves,
+            tuning.moveRanges
           ) +
           diversityGap * 1.9 +
           2 +
@@ -1171,7 +1206,8 @@ function createProgressiveRounds(seed: number): PuzzleRound[] {
 
     if (used.has(picked.signature)) {
       const retryRounds = tryCreateProgressiveRounds(
-        (seed + Math.imul(index + 5, 0x7f4a7c15)) >>> 0
+        (seed + Math.imul(index + 5, 0x7f4a7c15)) >>> 0,
+        tuning
       );
       if (retryRounds) return retryRounds;
 
@@ -1193,7 +1229,8 @@ function createProgressiveRounds(seed: number): PuzzleRound[] {
           signature: getPiecesSignature(backupPieces),
           fitScore: getTierFitScore(
             tier,
-            backupMoves > 0 ? backupMoves : backupTemplate.parMoves
+            backupMoves > 0 ? backupMoves : backupTemplate.parMoves,
+            tuning.moveRanges
           ) + variationPenalty,
           diversityScore: backupDiversityScore,
           styleProfile: getMoveStyleProfile(backupDiversity),
@@ -1234,7 +1271,7 @@ function createProgressiveRounds(seed: number): PuzzleRound[] {
           pieces: clonePieces(walker),
           parMoves: minMoves,
           signature,
-          fitScore: getTierFitScore(tier, minMoves) + variationPenalty,
+          fitScore: getTierFitScore(tier, minMoves, tuning.moveRanges) + variationPenalty,
           diversityScore: getMoveDiversityScore(diversity),
           styleProfile: getMoveStyleProfile(diversity),
           variationPenalty,
@@ -1262,7 +1299,8 @@ function createProgressiveRounds(seed: number): PuzzleRound[] {
           signature: getPiecesSignature(emergencyPieces),
           fitScore: getTierFitScore(
             tier,
-            emergencyMoves > 0 ? emergencyMoves : emergencyTemplate.parMoves
+            emergencyMoves > 0 ? emergencyMoves : emergencyTemplate.parMoves,
+            tuning.moveRanges
           ) + variationPenalty,
           diversityScore: getMoveDiversityScore(emergencyDiversity),
           styleProfile: getMoveStyleProfile(emergencyDiversity),
@@ -1314,21 +1352,26 @@ function getPieceTexture(piece: PuzzlePiece): string {
   return BLOCK_TEXTURES[(hash % (BLOCK_TEXTURES.length - 1)) + 1];
 }
 
-function buildSession(seedText: string): {
+function buildSession(seedText: string, mode: DifficultyMode): {
   rounds: PuzzleRound[];
   rewardOrder: WoodpeckerPart[];
 } {
   const seedBase = hashSeed(seedText);
-  const rounds = createProgressiveRounds(seedBase);
+  const tuning = mode === "easy" ? EASY_TUNING : HELL_TUNING;
+  const rounds = createProgressiveRounds(seedBase, tuning);
   const rng = createRng(seedBase ^ 0x9e3779b9);
   const rewardOrder = shuffleWithRng(WOODPECKER_PARTS, rng);
   return { rounds, rewardOrder };
 }
 
-export function FindPartsGame({ onComplete, soundOn = true }: FindPartsGameProps) {
+export function FindPartsGame({
+  onComplete,
+  soundOn = true,
+  difficultyMode = "hell",
+}: FindPartsGameProps) {
   const initialSession = useMemo(
-    () => buildSession(`${Date.now()}-${Math.random()}`),
-    []
+    () => buildSession(`${Date.now()}-${Math.random()}`, difficultyMode),
+    [difficultyMode]
   );
 
   const [phase, setPhase] = useState<Phase>("ready");
@@ -1433,7 +1476,7 @@ export function FindPartsGame({ onComplete, soundOn = true }: FindPartsGameProps
 
   const startGame = useCallback(() => {
     sfxButtonPress();
-    const session = buildSession(`${Date.now()}-${Math.random()}`);
+    const session = buildSession(`${Date.now()}-${Math.random()}`, difficultyMode);
     setRounds(session.rounds);
     setRewardOrder(session.rewardOrder);
     setRoundIndex(0);
@@ -1447,7 +1490,7 @@ export function FindPartsGame({ onComplete, soundOn = true }: FindPartsGameProps
     setRoundTimeLeftMs(ROUND_TIME_LIMIT_MS);
     setPieces(clonePieces(session.rounds[0].pieces));
     setPhase("playing");
-  }, []);
+  }, [difficultyMode]);
 
   const completeCurrentRound = useCallback(
     (nextMoveCount: number) => {
