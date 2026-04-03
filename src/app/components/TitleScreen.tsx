@@ -14,10 +14,13 @@ interface TitleScreenProps {
 export function TitleScreen({ onStart, onHowTo, soundOn, onToggleSound }: TitleScreenProps) {
   return (
     <div
-      className="size-full flex flex-col items-center justify-between relative overflow-hidden py-8 px-4"
+      className="size-full flex flex-col items-center justify-between relative overflow-y-auto overflow-x-hidden px-4"
       style={{
         background: "linear-gradient(180deg, #F9E7C4 0%, #F5D9A6 100%)",
         fontFamily: "'Jua', sans-serif",
+        paddingTop: "clamp(8px, 2.2vh, 28px)",
+        paddingBottom: "clamp(10px, 2.4vh, 30px)",
+        rowGap: "clamp(8px, 1.8vh, 18px)",
       }}
     >
       <div
@@ -58,7 +61,7 @@ export function TitleScreen({ onStart, onHowTo, soundOn, onToggleSound }: TitleS
 
       {/* Title */}
       <motion.div
-        className="text-center mt-8 z-10"
+        className="text-center z-10"
         initial={{ y: -30, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.8, type: "spring" }}
@@ -91,11 +94,12 @@ export function TitleScreen({ onStart, onHowTo, soundOn, onToggleSound }: TitleS
       {/* Sprite animation area */}
       <motion.div
         className="relative flex-1 flex items-center justify-center w-full"
+        style={{ minHeight: 170 }}
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ delay: 0.3, duration: 0.6 }}
       >
-        <WoodpeckerSpriteAnimation />
+        <WoodpeckerSpriteAnimation compact />
       </motion.div>
 
       {/* Buttons */}

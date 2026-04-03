@@ -128,6 +128,22 @@ export default function App() {
     setScores((prev) => (prev[scoreKey] === 0 ? prev : { ...prev, [scoreKey]: 0 }));
   }, [stage]);
 
+  useEffect(() => {
+    const setViewportHeight = () => {
+      const height = window.visualViewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty("--app-vh", `${height}px`);
+    };
+
+    setViewportHeight();
+    window.addEventListener("resize", setViewportHeight);
+    window.visualViewport?.addEventListener("resize", setViewportHeight);
+
+    return () => {
+      window.removeEventListener("resize", setViewportHeight);
+      window.visualViewport?.removeEventListener("resize", setViewportHeight);
+    };
+  }, []);
+
   const renderStage = () => {
     switch (stage) {
       case "splash":
@@ -222,7 +238,8 @@ export default function App() {
     <div
       style={{
         width: "100%",
-        minHeight: "100vh",
+        minHeight: "var(--app-vh, 100dvh)",
+        height: "var(--app-vh, 100dvh)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -236,7 +253,7 @@ export default function App() {
           position: "relative",
           width: "100%",
           maxWidth: 430,
-          height: "100vh",
+          height: "var(--app-vh, 100dvh)",
           maxHeight: 900,
           overflow: "hidden",
           background: "#FFF8DC",
@@ -246,7 +263,7 @@ export default function App() {
         <div
           style={{
             position: "absolute",
-            top: 8,
+            top: "calc(8px + env(safe-area-inset-top))",
             right: 8,
             zIndex: 1000,
             display: "flex",
@@ -282,7 +299,12 @@ export default function App() {
         <AnimatePresence mode="wait">
           <motion.div
             key={stage}
-            style={{ position: "absolute", inset: 0 }}
+            style={{
+              position: "absolute",
+              inset: 0,
+              paddingTop: "env(safe-area-inset-top)",
+              paddingBottom: "env(safe-area-inset-bottom)",
+            }}
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}

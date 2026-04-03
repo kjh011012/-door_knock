@@ -93,7 +93,11 @@ function buildTimeline(): TimelineFrame[] {
   return timeline;
 }
 
-export function WoodpeckerSpriteAnimation() {
+interface WoodpeckerSpriteAnimationProps {
+  compact?: boolean;
+}
+
+export function WoodpeckerSpriteAnimation({ compact = false }: WoodpeckerSpriteAnimationProps) {
   const timeline = useMemo(() => buildTimeline(), []);
   const [frameIndex, setFrameIndex] = useState(0);
 
@@ -128,7 +132,8 @@ export function WoodpeckerSpriteAnimation() {
         src={timeline[frameIndex].src}
         alt="딱따구리 애니메이션"
         style={{
-          width: "min(88vw, 320px)",
+          width: compact ? "min(76vw, 290px)" : "min(88vw, 320px)",
+          maxHeight: compact ? "min(36dvh, 320px)" : "min(48dvh, 420px)",
           height: "auto",
           objectFit: "contain",
           userSelect: "none",
