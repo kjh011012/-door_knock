@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
 import { motion } from "motion/react";
-import { WoodpeckerSVG } from "./WoodpeckerSVG";
 import { Volume2, VolumeX } from "lucide-react";
+import { WoodpeckerSpriteAnimation } from "./WoodpeckerSpriteAnimation";
+import workshopBackground from "../../assets/woodpecker/workshop-background.png";
+import titleImage from "../../assets/woodpecker/main_top.png";
 
 interface TitleScreenProps {
   onStart: () => void;
@@ -11,51 +12,32 @@ interface TitleScreenProps {
 }
 
 export function TitleScreen({ onStart, onHowTo, soundOn, onToggleSound }: TitleScreenProps) {
-  const [knock, setKnock] = useState(false);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setKnock(true);
-      setTimeout(() => setKnock(false), 200);
-      setTimeout(() => {
-        setKnock(true);
-        setTimeout(() => setKnock(false), 200);
-      }, 300);
-    }, 2500);
-    return () => clearInterval(interval);
-  }, []);
-
   return (
     <div
       className="size-full flex flex-col items-center justify-between relative overflow-hidden py-8 px-4"
       style={{
-        background: "linear-gradient(180deg, #FFF8DC 0%, #F5DEB3 40%, #DEB887 100%)",
+        background: "linear-gradient(180deg, #F9E7C4 0%, #F5D9A6 100%)",
         fontFamily: "'Jua', sans-serif",
       }}
     >
-      {/* Window with light */}
-      <div className="absolute top-4 right-4 w-20 h-20">
-        <div
-          className="w-full h-full rounded-lg"
-          style={{
-            background: "linear-gradient(135deg, #87CEEB 0%, #B0E0E6 100%)",
-            border: "4px solid #8B6914",
-            boxShadow: "inset 0 0 20px rgba(255,255,200,0.5)",
-          }}
-        >
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-px h-full" style={{ background: "#8B6914" }} />
-            <div className="absolute w-full h-px" style={{ background: "#8B6914" }} />
-          </div>
-        </div>
-        {/* Warm light rays */}
-        <motion.div
-          className="absolute -bottom-4 -left-4 w-28 h-28 rounded-full"
-          style={{ background: "radial-gradient(circle, rgba(255,200,50,0.15) 0%, transparent 70%)" }}
-          animate={{ opacity: [0.5, 0.8, 0.5] }}
-          transition={{ duration: 3, repeat: Infinity }}
-        />
-      </div>
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage: `url(${workshopBackground})`,
+          backgroundRepeat: "no-repeat",
+          backgroundSize: "contain",
+          backgroundPosition: "center top",
+          opacity: 0.95,
+        }}
+      />
+
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            "linear-gradient(180deg, rgba(255,248,220,0.34) 0%, rgba(255,248,220,0.18) 30%, rgba(255,248,220,0.28) 100%)",
+        }}
+      />
 
       {/* Sound toggle */}
       <button
@@ -81,92 +63,39 @@ export function TitleScreen({ onStart, onHowTo, soundOn, onToggleSound }: TitleS
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.8, type: "spring" }}
       >
-        <h1 style={{ fontSize: 32, color: "#5C3317", textShadow: "1px 1px 2px rgba(0,0,0,0.15)" }}>
-          딱따구리
-        </h1>
-        <h2 style={{ fontSize: 24, color: "#8B4513" }}>도어노크 만들기</h2>
-        <motion.p
-          className="mt-2"
-          style={{ fontSize: 14, color: "#A0522D" }}
-          animate={{ opacity: [0.6, 1, 0.6] }}
-          transition={{ duration: 2, repeat: Infinity }}
+        <img
+          src={titleImage}
+          alt="공방의 딱따구리 나만의 도어노크 만들기"
+          style={{
+            width: "min(92vw, 360px)",
+            height: "auto",
+            objectFit: "contain",
+            filter: "drop-shadow(0 8px 16px rgba(255,248,220,0.35))",
+          }}
+          draggable={false}
+        />
+        <motion.div
+          className="mx-auto mt-2"
+          style={{
+            width: 72,
+            height: 4,
+            borderRadius: 999,
+            background: "linear-gradient(90deg, rgba(192,122,24,0) 0%, rgba(192,122,24,0.8) 50%, rgba(192,122,24,0) 100%)",
+          }}
+          animate={{ opacity: [0.35, 0.8, 0.35], scaleX: [0.92, 1, 0.92] }}
+          transition={{ duration: 2.2, repeat: Infinity }}
         >
-          ✨ 나만의 톡톡 공방 ✨
-        </motion.p>
+        </motion.div>
       </motion.div>
 
-      {/* Door with woodpecker */}
+      {/* Sprite animation area */}
       <motion.div
-        className="relative flex-1 flex items-center justify-center"
+        className="relative flex-1 flex items-center justify-center w-full"
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ delay: 0.3, duration: 0.6 }}
       >
-        {/* Door */}
-        <div
-          className="relative w-48 h-64 rounded-t-xl"
-          style={{
-            background: "linear-gradient(180deg, #A0522D 0%, #8B4513 100%)",
-            border: "4px solid #654321",
-            boxShadow: "4px 4px 16px rgba(0,0,0,0.3)",
-          }}
-        >
-          {/* Door panels */}
-          <div
-            className="absolute top-4 left-4 right-4 h-24 rounded"
-            style={{ border: "2px solid #654321", opacity: 0.5 }}
-          />
-          <div
-            className="absolute bottom-4 left-4 right-4 h-24 rounded"
-            style={{ border: "2px solid #654321", opacity: 0.5 }}
-          />
-          {/* Door handle */}
-          <div
-            className="absolute right-4 top-1/2 w-4 h-8 rounded-full"
-            style={{ background: "#DAA520", border: "1px solid #B8860B", transform: "translateY(-50%)" }}
-          />
-
-          {/* Woodpecker on door */}
-          <motion.div
-            className="absolute -top-16 left-1/2"
-            style={{ transform: "translateX(-50%)" }}
-            animate={knock ? { rotate: [0, -15, 0] } : {}}
-            transition={{ duration: 0.15 }}
-          >
-            <WoodpeckerSVG size={70} />
-          </motion.div>
-
-          {/* Knock effect */}
-          {knock && (
-            <motion.div
-              className="absolute top-8 left-1/2 -translate-x-1/2"
-              initial={{ scale: 0, opacity: 1 }}
-              animate={{ scale: 2, opacity: 0 }}
-              transition={{ duration: 0.4 }}
-            >
-              <span style={{ fontSize: 20 }}>💥</span>
-            </motion.div>
-          )}
-
-          {/* "톡톡" text */}
-          <motion.div
-            className="absolute -right-14 top-4"
-            animate={knock ? { scale: [0, 1.2, 1], opacity: [0, 1, 0] } : { opacity: 0 }}
-            transition={{ duration: 0.6 }}
-          >
-            <span
-              className="px-2 py-1 rounded-lg"
-              style={{
-                background: "#FFD700",
-                color: "#5C3317",
-                fontSize: 14,
-                fontFamily: "'Jua', sans-serif",
-              }}
-            >
-              톡톡!
-            </span>
-          </motion.div>
-        </div>
+        <WoodpeckerSpriteAnimation />
       </motion.div>
 
       {/* Buttons */}

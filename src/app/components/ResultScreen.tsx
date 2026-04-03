@@ -1,36 +1,53 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { WoodpeckerSVG } from "./WoodpeckerSVG";
-import type { Customization } from "./CustomizeScreen";
 import confetti from "canvas-confetti";
+import tiredMoodImage from "../../assets/woodpecker/피곤한.png";
+import smileMoodImage from "../../assets/woodpecker/웃고있는.png";
+import joyMoodImage from "../../assets/woodpecker/즐거운.png";
+import hypeMoodImage from "../../assets/woodpecker/아주신나는.png";
+import { buildScoreSummary, STAGE_SCORE_MAX, TOTAL_SCORE_MAX } from "../utils/score";
 
 interface ResultScreenProps {
   scores: {
     findParts: number;
     assembly: number;
     hammer: number;
-    balance: number;
-    operation: number;
     rhythm: number;
   };
-  customization: Customization;
   onNext: () => void;
+  onRetry: () => void;
 }
 
 function getGrade(total: number): { emoji: string; label: string; message: string } {
-  if (total >= 90) return { emoji: "👑", label: "장인", message: "완벽한 균형! 진정한 목공 장인!" };
+  if (total >= 90) return { emoji: "👑", label: "장인", message: "완벽한 타이밍! 진정한 목공 장인!" };
   if (total >= 70) return { emoji: "😄", label: "잘됨", message: "톡톡! 잘 작동해요!" };
   if (total >= 50) return { emoji: "🙂", label: "보통", message: "나쁘지 않아요! 연습하면 더 잘 만들 수 있어요!" };
   return { emoji: "😢", label: "실패", message: "다시 도전해봐요! 할 수 있어요!" };
 }
 
-export function ResultScreen({ scores, customization, onNext }: ResultScreenProps) {
-  const [showDetails, setShowDetails] = useState(false);
+function getMoodImageByScore(totalScore: number): { src: string; alt: string } {
+  if (totalScore <= 50) return { src: tiredMoodImage, alt: "피곤한 딱따구리" };
+  if (totalScore <= 70) return { src: smileMoodImage, alt: "웃고있는 딱따구리" };
+  if (totalScore <= 90) return { src: joyMoodImage, alt: "즐거운 딱따구리" };
+  return { src: hypeMoodImage, alt: "아주신나는 딱따구리" };
+}
 
-  const totalScore = Math.round(
-    (scores.findParts + scores.assembly + scores.hammer + scores.balance + scores.operation + scores.rhythm) / 6
-  );
+export function ResultScreen({ scores, onNext, onRetry }: ResultScreenProps) {
+  const [showDetails, setShowDetails] = useState(false);
+  const summary = buildScoreSummary(scores);
+
+  const scoreItems = [
+    { label: "나무블럭 만들기", score: summary.stageScores.findParts, emoji: "🪵" },
+    { label: "테트리스 조립", score: summary.stageScores.assembly, emoji: "🧩" },
+    { label: "리듬 두더지", score: summary.stageScores.hammer, emoji: "🔨" },
+    { label: "리듬 게임", score: summary.stageScores.rhythm, emoji: "🎵" },
+  ];
+
+  const totalRawScore = summary.totalRawScore;
+  const totalScore = summary.totalScore100;
   const grade = getGrade(totalScore);
+  const moodImage = getMoodImageByScore(totalScore);
+  const canClaimReward = totalScore >= 50;
 
   useEffect(() => {
     if (totalScore >= 70) {
@@ -46,15 +63,6 @@ export function ResultScreen({ scores, customization, onNext }: ResultScreenProp
     }
   }, [totalScore]);
 
-  const scoreItems = [
-    { label: "부품 찾기", score: scores.findParts, emoji: "🔍" },
-    { label: "조립", score: scores.assembly, emoji: "🧩" },
-    { label: "망치질", score: scores.hammer, emoji: "🔨" },
-    { label: "균형 맞추기", score: scores.balance, emoji: "⚖️" },
-    { label: "작동 테스트", score: scores.operation, emoji: "🚪" },
-    { label: "리듬 톡톡", score: scores.rhythm, emoji: "🎵" },
-  ];
-
   return (
     <div
       className="size-full flex flex-col items-center relative overflow-hidden overflow-y-auto"
@@ -65,13 +73,6 @@ export function ResultScreen({ scores, customization, onNext }: ResultScreenProp
     >
       {/* Header */}
       <div className="pt-6 text-center">
-        <motion.div
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{ type: "spring", delay: 0.2 }}
-        >
-          <span style={{ fontSize: 64 }}>{grade.emoji}</span>
-        </motion.div>
         <motion.h1
           style={{ fontSize: 28, color: "#5C3317" }}
           initial={{ opacity: 0, y: 20 }}
@@ -97,15 +98,19 @@ export function ResultScreen({ scores, customization, onNext }: ResultScreenProp
         <motion.div
           animate={{ rotate: [-3, 3, -3] }}
           transition={{ duration: 2, repeat: Infinity }}
+          className="flex items-center justify-center"
         >
-          <WoodpeckerSVG
-            size={120}
-            bodyColor={customization.bodyColor}
-            headColor={customization.headColor}
-            beakColor={customization.beakColor}
-            wingColor={customization.wingColor}
-            eyeStyle={customization.eyeStyle}
-            pattern={customization.pattern}
+          <img
+            src={moodImage.src}
+            alt={moodImage.alt}
+            style={{
+              width: 190,
+              maxWidth: "62vw",
+              height: "auto",
+              borderRadius: 14,
+              boxShadow: "0 8px 22px rgba(0,0,0,0.22)",
+              border: "2px solid rgba(255,248,220,0.62)",
+            }}
           />
         </motion.div>
         {/* Sparkles */}
@@ -152,7 +157,15 @@ export function ResultScreen({ scores, customization, onNext }: ResultScreenProp
         animate={{ scale: 1 }}
         transition={{ delay: 0.8, type: "spring" }}
       >
-        <span style={{ fontSize: 24, color: "#5C3317" }}>총점: {totalScore}점</span>
+        <div className="text-center">
+          <p style={{ fontSize: 24, color: "#5C3317" }}>최종 환산 점수: {totalScore}점 / 100점</p>
+          <p style={{ fontSize: 12, color: "#6B4226", marginTop: 2 }}>
+            원점수 {totalRawScore} / {TOTAL_SCORE_MAX}점 (각 스테이지 {STAGE_SCORE_MAX}점 만점)
+          </p>
+          <p style={{ fontSize: 11, color: "#6B4226", marginTop: 1 }}>
+            총 최고점: {TOTAL_SCORE_MAX.toLocaleString()}점
+          </p>
+        </div>
       </motion.div>
 
       {/* Score details */}
@@ -164,7 +177,7 @@ export function ResultScreen({ scores, customization, onNext }: ResultScreenProp
         animate={{ opacity: 1 }}
         transition={{ delay: 1 }}
       >
-        {showDetails ? "점수 숨기기" : "📊 상세 점수 보기"}
+        {showDetails ? "점수 숨기기" : "상세 점수 보기"}
       </motion.button>
 
       {showDetails && (
@@ -183,7 +196,12 @@ export function ResultScreen({ scores, customization, onNext }: ResultScreenProp
               transition={{ delay: i * 0.1 }}
             >
               <span style={{ fontSize: 18 }}>{item.emoji}</span>
-              <span className="flex-1" style={{ fontSize: 13, color: "#5C3317" }}>{item.label}</span>
+              <div className="flex-1">
+                <p style={{ fontSize: 13, color: "#5C3317" }}>{item.label}</p>
+                <p style={{ fontSize: 10, color: "#8B5E3B", marginTop: 1 }}>
+                  최고점 {STAGE_SCORE_MAX.toLocaleString()}점
+                </p>
+              </div>
               <div
                 className="w-24 h-3 rounded-full overflow-hidden"
                 style={{ background: "rgba(0,0,0,0.1)" }}
@@ -192,19 +210,19 @@ export function ResultScreen({ scores, customization, onNext }: ResultScreenProp
                   className="h-full rounded-full"
                   style={{
                     background:
-                      item.score >= 80
+                      item.score >= 2000
                         ? "linear-gradient(90deg, #4CAF50, #66BB6A)"
-                        : item.score >= 50
+                        : item.score >= 1250
                         ? "linear-gradient(90deg, #FF8C00, #FFD700)"
                         : "linear-gradient(90deg, #FF4444, #FF6666)",
                   }}
                   initial={{ width: 0 }}
-                  animate={{ width: `${item.score}%` }}
+                  animate={{ width: `${(item.score / STAGE_SCORE_MAX) * 100}%` }}
                   transition={{ delay: i * 0.1 + 0.2, duration: 0.5 }}
                 />
               </div>
-              <span style={{ fontSize: 12, color: "#8B4513", width: 30, textAlign: "right" }}>
-                {item.score}
+              <span style={{ fontSize: 12, color: "#8B4513", width: 72, textAlign: "right" }}>
+                {item.score} / {STAGE_SCORE_MAX}
               </span>
             </motion.div>
           ))}
@@ -221,13 +239,13 @@ export function ResultScreen({ scores, customization, onNext }: ResultScreenProp
             boxShadow: "0 4px 12px rgba(232,116,12,0.4)",
             fontSize: 18,
           }}
-          onClick={onNext}
+          onClick={canClaimReward ? onNext : onRetry}
           whileTap={{ scale: 0.95 }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 1 }}
         >
-          🎁 보상 받기!
+          {canClaimReward ? "🎁 보상 받기!" : "🔄 다시 하기"}
         </motion.button>
       </div>
     </div>

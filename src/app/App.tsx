@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { SplashScreen } from "./components/SplashScreen";
 import { TitleScreen } from "./components/TitleScreen";
@@ -6,12 +6,13 @@ import { HowToPlay } from "./components/HowToPlay";
 import { FindPartsGame } from "./components/FindPartsGame";
 import { AssemblyGame } from "./components/AssemblyGame";
 import { HammerGame } from "./components/HammerGame";
-import { BalanceGame } from "./components/BalanceGame";
-import { OperationTest } from "./components/OperationTest";
 import { CustomizeScreen, type Customization } from "./components/CustomizeScreen";
 import { ResultScreen } from "./components/ResultScreen";
 import { RewardScreen } from "./components/RewardScreen";
 import { RhythmGame } from "./components/RhythmGame";
+import { DEFAULT_WORKSHOP_BGM, startBGM, stopBGM } from "./components/tetris-sounds";
+import { WOODPECKER_PARTS } from "./data/woodpeckerParts";
+import type { GameScores } from "./utils/score";
 
 type GameStage =
   | "splash"
@@ -21,8 +22,6 @@ type GameStage =
   | "findParts"
   | "assembly"
   | "hammer"
-  | "balance"
-  | "operation"
   | "customize"
   | "rhythm"
   | "result"
@@ -32,29 +31,31 @@ const STAGE_ORDER: GameStage[] = [
   "findParts",
   "assembly",
   "hammer",
-  "balance",
-  "operation",
   "customize",
+  "rhythm",
 ];
 
-interface Scores {
-  findParts: number;
-  assembly: number;
-  hammer: number;
-  balance: number;
-  operation: number;
-  rhythm: number;
-}
+const DEBUG_STAGE_OPTIONS: Array<{ value: GameStage; label: string }> = [
+  { value: "splash", label: "splash" },
+  { value: "title", label: "title" },
+  { value: "howto", label: "howto" },
+  { value: "workbench", label: "workbench" },
+  { value: "findParts", label: "findParts" },
+  { value: "assembly", label: "assembly" },
+  { value: "hammer", label: "hammer" },
+  { value: "customize", label: "customize" },
+  { value: "rhythm", label: "rhythm" },
+  { value: "result", label: "result" },
+  { value: "reward", label: "reward" },
+];
 
 export default function App() {
   const [stage, setStage] = useState<GameStage>("splash");
   const [soundOn, setSoundOn] = useState(true);
-  const [scores, setScores] = useState<Scores>({
+  const [scores, setScores] = useState<GameScores>({
     findParts: 0,
     assembly: 0,
     hammer: 0,
-    balance: 0,
-    operation: 0,
     rhythm: 0,
   });
   const [customization, setCustomization] = useState<Customization>({
@@ -66,8 +67,9 @@ export default function App() {
     pattern: "none",
   });
 
-  const updateScore = useCallback((key: keyof Scores, value: number) => {
-    setScores((prev) => ({ ...prev, [key]: value }));
+  const updateScore = useCallback((key: keyof GameScores, value: number) => {
+    const safeValue = Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+    setScores((prev) => ({ ...prev, [key]: safeValue }));
   }, []);
 
   const goToNextStage = useCallback(() => {
@@ -78,7 +80,7 @@ export default function App() {
   }, [stage]);
 
   const handleRestart = useCallback(() => {
-    setScores({ findParts: 0, assembly: 0, hammer: 0, balance: 0, operation: 0, rhythm: 0 });
+    setScores({ findParts: 0, assembly: 0, hammer: 0, rhythm: 0 });
     setCustomization({
       bodyColor: "#8B4513",
       headColor: "#DC143C",
@@ -90,9 +92,41 @@ export default function App() {
     setStage("title");
   }, []);
 
-  const totalScore = Math.round(
-    (scores.findParts + scores.assembly + scores.hammer + scores.balance + scores.operation + scores.rhythm) / 6
-  );
+  const handleToggleSound = useCallback(() => {
+    setSoundOn((prev) => {
+      const next = !prev;
+      if (!next) {
+        stopBGM();
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const preGameStages: GameStage[] = ["splash", "title", "howto", "workbench", "result", "reward"];
+    const shouldPlayPreGameBGM = soundOn && preGameStages.includes(stage);
+
+    if (shouldPlayPreGameBGM) {
+      startBGM({ source: DEFAULT_WORKSHOP_BGM, volume: 0.55 });
+      return;
+    }
+
+    stopBGM();
+  }, [soundOn, stage]);
+
+  useEffect(() => {
+    const stageToScoreKey: Partial<Record<GameStage, keyof GameScores>> = {
+      findParts: "findParts",
+      assembly: "assembly",
+      hammer: "hammer",
+      rhythm: "rhythm",
+    };
+
+    const scoreKey = stageToScoreKey[stage];
+    if (!scoreKey) return;
+
+    setScores((prev) => (prev[scoreKey] === 0 ? prev : { ...prev, [scoreKey]: 0 }));
+  }, [stage]);
 
   const renderStage = () => {
     switch (stage) {
@@ -105,7 +139,7 @@ export default function App() {
             onStart={() => setStage("workbench")}
             onHowTo={() => setStage("howto")}
             soundOn={soundOn}
-            onToggleSound={() => setSoundOn(!soundOn)}
+            onToggleSound={handleToggleSound}
           />
         );
 
@@ -118,6 +152,7 @@ export default function App() {
       case "findParts":
         return (
           <FindPartsGame
+            soundOn={soundOn}
             onComplete={(score) => {
               updateScore("findParts", score);
               setStage("assembly");
@@ -140,36 +175,15 @@ export default function App() {
           <HammerGame
             onComplete={(score) => {
               updateScore("hammer", score);
-              setStage("balance");
-            }}
-          />
-        );
-
-      case "balance":
-        return (
-          <BalanceGame
-            onComplete={(score) => {
-              updateScore("balance", score);
-              setStage("operation");
-            }}
-          />
-        );
-
-      case "operation":
-        return (
-          <OperationTest
-            onComplete={(score) => {
-              updateScore("operation", score);
               setStage("customize");
             }}
-            balanceScore={scores.balance}
-            hammerScore={scores.hammer}
           />
         );
 
       case "customize":
         return (
           <CustomizeScreen
+            soundOn={soundOn}
             onComplete={(custom) => {
               setCustomization(custom);
               setStage("rhythm");
@@ -184,7 +198,6 @@ export default function App() {
               updateScore("rhythm", score);
               setStage("result");
             }}
-            customization={customization}
           />
         );
 
@@ -192,13 +205,13 @@ export default function App() {
         return (
           <ResultScreen
             scores={scores}
-            customization={customization}
             onNext={() => setStage("reward")}
+            onRetry={handleRestart}
           />
         );
 
       case "reward":
-        return <RewardScreen totalScore={totalScore} onRestart={handleRestart} />;
+        return <RewardScreen scores={scores} onRestart={handleRestart} />;
 
       default:
         return null;
@@ -207,20 +220,69 @@ export default function App() {
 
   return (
     <div
-      className="size-full flex items-center justify-center"
-      style={{ background: "#2C1810", fontFamily: "'Jua', sans-serif" }}
+      style={{
+        width: "100%",
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#2C1810",
+        fontFamily: "'Jua', sans-serif",
+      }}
     >
       {/* Mobile frame */}
       <div
-        className="relative w-full max-w-md h-full max-h-[900px] overflow-hidden"
         style={{
+          position: "relative",
+          width: "100%",
+          maxWidth: 430,
+          height: "100vh",
+          maxHeight: 900,
+          overflow: "hidden",
+          background: "#FFF8DC",
           boxShadow: "0 0 40px rgba(0,0,0,0.5)",
         }}
       >
+        <div
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 8px",
+            borderRadius: 10,
+            background: "rgba(32,20,12,0.85)",
+            border: "1px solid rgba(255,248,220,0.4)",
+          }}
+        >
+          <span style={{ fontSize: 10, color: "#FFF8DC" }}>DEV</span>
+          <select
+            value={stage}
+            onChange={(event) => setStage(event.target.value as GameStage)}
+            style={{
+              fontSize: 11,
+              padding: "4px 6px",
+              borderRadius: 6,
+              border: "1px solid rgba(255,248,220,0.5)",
+              background: "#FFF8DC",
+              color: "#4A2A14",
+            }}
+          >
+            {DEBUG_STAGE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <AnimatePresence mode="wait">
           <motion.div
             key={stage}
-            className="absolute inset-0"
+            style={{ position: "absolute", inset: 0 }}
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
@@ -236,15 +298,6 @@ export default function App() {
 
 // Workbench intro screen
 function WorkbenchScreen({ onStart }: { onStart: () => void }) {
-  const parts = [
-    { emoji: "🪵", name: "몸통", x: 20, y: 25, rot: -10 },
-    { emoji: "🔴", name: "머리", x: 65, y: 20, rot: 15 },
-    { emoji: "📐", name: "부리", x: 40, y: 55, rot: -5 },
-    { emoji: "🍂", name: "날개", x: 70, y: 60, rot: 20 },
-    { emoji: "🔩", name: "스프링", x: 25, y: 70, rot: 0 },
-    { emoji: "🔨", name: "망치", x: 55, y: 40, rot: -15 },
-  ];
-
   return (
     <div
       className="size-full flex flex-col relative overflow-hidden"
@@ -256,17 +309,25 @@ function WorkbenchScreen({ onStart }: { onStart: () => void }) {
       {/* Header */}
       <div className="px-4 pt-4 pb-2 text-center">
         <h2 style={{ fontSize: 22, color: "#5C3317" }}>🪵 작업대</h2>
-        <p style={{ fontSize: 14, color: "#8B4513" }}>부품들이 흩어져 있어요!</p>
+        <p style={{ fontSize: 14, color: "#8B4513" }}>도어노커에 들어갈 진짜 부품을 확인해요.</p>
       </div>
 
-      {/* Progress bar */}
-      <div className="mx-4 mb-2">
-        <div className="flex items-center gap-2 mb-1">
-          <span style={{ fontSize: 11, color: "#8B4513" }}>진행률</span>
-          <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.1)", border: "1px solid #8B6914" }}>
-            <div className="h-full w-0 rounded-full" style={{ background: "linear-gradient(90deg, #FF8C00, #FFD700)" }} />
-          </div>
-          <span style={{ fontSize: 11, color: "#8B4513" }}>0%</span>
+      {/* Parts summary */}
+      <div className="mx-4 mb-2 rounded-xl px-3 py-2" style={{ background: "rgba(255,248,220,0.78)", border: "2px solid #C69C5D" }}>
+        <div className="flex items-center justify-between">
+          <span style={{ fontSize: 12, color: "#8B4513" }}>준비된 부품</span>
+          <span style={{ fontSize: 12, color: "#5C3317" }}>{WOODPECKER_PARTS.length}개</span>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {WOODPECKER_PARTS.map((part) => (
+            <span
+              key={part.partId}
+              className="px-2 py-1 rounded-lg"
+              style={{ background: "#E9D3AB", fontSize: 11, color: "#5C3317" }}
+            >
+              {part.name}
+            </span>
+          ))}
         </div>
       </div>
 
@@ -291,26 +352,31 @@ function WorkbenchScreen({ onStart }: { onStart: () => void }) {
         </div>
 
         {/* Scattered parts */}
-        {parts.map((part, i) => (
+        {WOODPECKER_PARTS.map((part, i) => (
           <motion.div
-            key={part.name}
+            key={part.partId}
             className="absolute flex flex-col items-center"
             style={{
-              left: `${part.x}%`,
-              top: `${part.y}%`,
-              transform: `rotate(${part.rot}deg)`,
+              left: `${part.bench.x}%`,
+              top: `${part.bench.y}%`,
+              transform: `rotate(${part.bench.rotation}deg)`,
             }}
             initial={{ scale: 0, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.2 + i * 0.15, type: "spring" }}
           >
-            <motion.span
-              style={{ fontSize: 36 }}
-              animate={{ y: [0, -5, 0], rotate: [part.rot, part.rot + 5, part.rot] }}
+            <motion.img
+              src={part.image}
+              alt={part.name}
+              style={{
+                width: part.bench.width,
+                height: "auto",
+                filter: "drop-shadow(0 8px 12px rgba(92,51,23,0.18))",
+                pointerEvents: "none",
+              }}
+              animate={{ y: [0, -4, 0] }}
               transition={{ duration: 2 + i * 0.3, repeat: Infinity }}
-            >
-              {part.emoji}
-            </motion.span>
+            />
             <span
               className="px-2 py-0.5 rounded mt-1"
               style={{
@@ -334,7 +400,7 @@ function WorkbenchScreen({ onStart }: { onStart: () => void }) {
             className="px-4 py-2 rounded-xl"
             style={{ background: "rgba(255,248,220,0.8)", border: "2px dashed #8B6914" }}
           >
-            <span style={{ fontSize: 13, color: "#5C3317" }}>이 부품들로 딱따구리를 만들어요!</span>
+            <span style={{ fontSize: 13, color: "#5C3317" }}>이 6개 부품을 기억한 뒤 다음 단계에서 찾아보세요.</span>
           </div>
         </motion.div>
       </div>
@@ -351,7 +417,7 @@ function WorkbenchScreen({ onStart }: { onStart: () => void }) {
         transition={{ delay: 1 }}
       >
         <p style={{ fontSize: 12, color: "#2E5A2E" }}>
-          🧠 <strong>알고 있나요?</strong> 딱따구리는 하루에 약 12,000번 나무를 두드려요! 우리도 딱따구리처럼 톡톡 두드리는 도어노크를 만들어봐요!
+          🧠 <strong>기억할 부품</strong> 머리, 몸통, 부리, 왼쪽 날개, 오른쪽 날개, 다리 순서로 살펴보고 다음 게임에서 같은 조각을 찾아주세요.
         </p>
       </motion.div>
 

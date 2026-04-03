@@ -1,9 +1,15 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import confetti from "canvas-confetti";
+import { buildScoreSummary, STAGE_SCORE_MAX, TOTAL_SCORE_MAX } from "../utils/score";
 
 interface RewardScreenProps {
-  totalScore: number;
+  scores: {
+    findParts: number;
+    assembly: number;
+    hammer: number;
+    rhythm: number;
+  };
   onRestart: () => void;
 }
 
@@ -18,50 +24,61 @@ interface Badge {
 
 const BADGES: Badge[] = [
   {
-    id: "beginner",
-    emoji: "🔨",
-    title: "첫 걸음",
-    description: "딱따구리 만들기 첫 도전!",
-    minScore: 0,
+    id: "badge1",
+    emoji: "🎖️",
+    title: "5등 메달",
+    description: "환산 점수 50점 달성",
+    minScore: 50,
     color: "#CD7F32",
   },
   {
-    id: "builder",
-    emoji: "🪵",
-    title: "조립 달인",
-    description: "부품을 잘 조립했어요!",
-    minScore: 30,
+    id: "badge2",
+    emoji: "🏅",
+    title: "4등 메달",
+    description: "환산 점수 60점 달성",
+    minScore: 60,
     color: "#C0C0C0",
   },
   {
-    id: "hammer",
-    emoji: "⚒️",
-    title: "망치 마스터",
-    description: "정확한 타이밍으로 못을 박았어요!",
-    minScore: 50,
+    id: "badge3",
+    emoji: "🥉",
+    title: "3등 메달",
+    description: "환산 점수 70점 달성",
+    minScore: 70,
     color: "#FFD700",
   },
   {
-    id: "balance",
-    emoji: "⚖️",
-    title: "균형 전문가",
-    description: "완벽한 균형감을 보여줬어요!",
-    minScore: 70,
+    id: "badge4",
+    emoji: "🥈",
+    title: "2등 메달",
+    description: "환산 점수 80점 달성",
+    minScore: 80,
     color: "#4CAF50",
   },
   {
-    id: "master",
-    emoji: "👑",
-    title: "공방 마스터",
-    description: "진정한 목공 장인이에요!",
+    id: "badge5",
+    emoji: "🥇",
+    title: "1등 메달",
+    description: "환산 점수 90점 달성",
     minScore: 90,
     color: "#FF8C00",
   },
 ];
 
-export function RewardScreen({ totalScore, onRestart }: RewardScreenProps) {
+export function RewardScreen({ scores, onRestart }: RewardScreenProps) {
   const [revealedIndex, setRevealedIndex] = useState(-1);
+  const summary = buildScoreSummary(scores);
+  const stageScores = [
+    { label: "나무블럭 만들기", score: summary.stageScores.findParts },
+    { label: "테트리스 조립", score: summary.stageScores.assembly },
+    { label: "두더지 게임", score: summary.stageScores.hammer },
+    { label: "리듬 게임", score: summary.stageScores.rhythm },
+  ];
+  const totalRawScore = summary.totalRawScore;
+  const totalScore = summary.totalScore100;
+
   const earnedBadges = BADGES.filter((b) => totalScore >= b.minScore);
+  const revealedCount = Math.min(revealedIndex + 1, earnedBadges.length);
 
   const revealNext = () => {
     const nextIdx = revealedIndex + 1;
@@ -77,6 +94,7 @@ export function RewardScreen({ totalScore, onRestart }: RewardScreenProps) {
   };
 
   const allRevealed = revealedIndex >= earnedBadges.length - 1;
+  const hasAllBadges = earnedBadges.length === BADGES.length;
 
   return (
     <div
@@ -111,9 +129,36 @@ export function RewardScreen({ totalScore, onRestart }: RewardScreenProps) {
           🎁 보상 획득!
         </h1>
         <p style={{ fontSize: 14, color: "#DEB887", marginTop: 4 }}>
-          획득한 배지: {Math.min(revealedIndex + 1, earnedBadges.length)} / {earnedBadges.length}
+          획득한 배지: {revealedCount} / {BADGES.length}
+        </p>
+        <p style={{ fontSize: 13, color: "#FFE3A6", marginTop: 4 }}>
+          최종 환산 점수: {totalScore}점 / 100점
+        </p>
+        <p style={{ fontSize: 11, color: "#D5B98A", marginTop: 2 }}>
+          원점수 {totalRawScore} / {TOTAL_SCORE_MAX}점
+        </p>
+        <p style={{ fontSize: 11, color: "#D5B98A", marginTop: 1 }}>
+          총 최고점: {TOTAL_SCORE_MAX.toLocaleString()}점
         </p>
       </motion.div>
+
+      <div className="w-full px-6 pt-4 grid grid-cols-2 gap-2">
+        {stageScores.map((item) => (
+          <div
+            key={item.label}
+            className="rounded-lg px-3 py-2"
+            style={{ background: "rgba(255,248,220,0.14)", border: "1px solid rgba(255,248,220,0.24)" }}
+          >
+            <p style={{ fontSize: 11, color: "#E6CDA6" }}>{item.label}</p>
+            <p style={{ fontSize: 13, color: "#FFF2DA", marginTop: 2 }}>
+              {item.score} / {STAGE_SCORE_MAX}
+            </p>
+            <p style={{ fontSize: 10, color: "#D8C19A", marginTop: 1 }}>
+              최고점 {STAGE_SCORE_MAX.toLocaleString()}점
+            </p>
+          </div>
+        ))}
+      </div>
 
       {/* Badge cards */}
       <div className="flex-1 w-full px-6 py-6 space-y-4">
@@ -182,7 +227,7 @@ export function RewardScreen({ totalScore, onRestart }: RewardScreenProps) {
             </div>
             <div>
               <h3 style={{ fontSize: 16, color: "#888" }}>{badge.title}</h3>
-              <p style={{ fontSize: 11, color: "#666" }}>{badge.minScore}점 이상 필요</p>
+              <p style={{ fontSize: 11, color: "#666" }}>{badge.minScore}점 이상 필요 (100점 환산)</p>
             </div>
           </div>
         ))}
@@ -209,6 +254,23 @@ export function RewardScreen({ totalScore, onRestart }: RewardScreenProps) {
           </motion.button>
         ) : (
           <>
+            {hasAllBadges && (
+              <motion.div
+                className="w-full p-4 rounded-xl"
+                style={{
+                  background: "linear-gradient(135deg, rgba(255,215,0,0.25), rgba(255,140,0,0.3))",
+                  border: "2px solid rgba(255,215,0,0.8)",
+                  boxShadow: "0 0 16px rgba(255,215,0,0.35)",
+                }}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+              >
+                <p style={{ fontSize: 17, color: "#FFE9B8", textAlign: "center" }}>🎉 5개 배지 모두 획득!</p>
+                <p style={{ fontSize: 15, color: "#FFF5DE", textAlign: "center", marginTop: 4 }}>
+                  쿠폰 1000원 제공 대상입니다.
+                </p>
+              </motion.div>
+            )}
             <motion.button
               className="w-full py-4 rounded-xl text-white"
               style={{

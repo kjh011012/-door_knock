@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import tetrisBgmTrack from "../../assets/woodpecker/Tetris-Bradinsky-tetis(mp3hamster.net).mp3";
+import tetrisReadyBgmTrack from "../../assets/woodpecker/Tetris-NES-Karinka(mp3hamster.net).mp3";
 import {
   startBGM,
   stopBGM,
@@ -22,6 +24,19 @@ interface AssemblyGameProps {
 const COLS = 10;
 const ROWS = 20;
 const GOAL_LINES = 10;
+const TIME_LIMIT_MS = 120000;
+const SPEED_UP_START_MS = 40000;
+const MAX_TIME_SPEEDUP_RATIO = 0.32;
+const ASSEMBLY_STAGE_MAX_SCORE = 2500;
+const ASSEMBLY_RESULT_MAX_SCORE = 100;
+const ASSEMBLY_START_SCORE = ASSEMBLY_STAGE_MAX_SCORE;
+const SCORE_SPEED_CLEAR_BONUS_MAX = 420;
+const LINE_CLEAR_BONUS: Record<number, number> = {
+  1: 50,
+  2: 100,
+  3: 150,
+  4: 200,
+};
 
 const SHAPES = [
   [[0,0],[0,1],[0,2],[0,3]], // I
@@ -41,6 +56,17 @@ const COLORS = [
 type Cell = number | null;
 type Grid = Cell[][];
 interface Piece { shape: number[][]; colorIdx: number; row: number; col: number; }
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getScoreDecayPerSec(elapsedSec: number): number {
+  if (elapsedSec < 40) return 15;
+  if (elapsedSec < 70) return 16;
+  if (elapsedSec < 90) return 17;
+  return 18;
+}
 
 function emptyGrid(): Grid { return Array.from({length:ROWS},()=>Array(COLS).fill(null)); }
 function mkPiece(): Piece {
@@ -69,35 +95,92 @@ function place(g: Grid, p: Piece): Grid {
 }
 function clearRows(g: Grid): {grid:Grid; cleared:number; rows:number[]} {
   const rows: number[] = [];
-  g.forEach((r,i)=>{ if(r.every(c=>c!==null)) rows.push(i); });
-  if (!rows.length) return {grid:g, cleared:0, rows:[]};
-  const kept = g.filter((_,i)=>!rows.includes(i));
-  const empty = Array.from({length:rows.length},()=>Array(COLS).fill(null));
-  return {grid:[...empty,...kept], cleared:rows.length, rows};
+  const ng: Grid = emptyGrid();
+  let write = ROWS - 1;
+
+  // 아래에서 위로 읽으면서, 클리어되지 않은 줄을 아래부터 다시 채운다.
+  for (let r = ROWS - 1; r >= 0; r--) {
+    if (g[r].every((c) => c !== null)) {
+      rows.push(r);
+      continue;
+    }
+    ng[write] = [...g[r]];
+    write--;
+  }
+
+  if (!rows.length) return { grid: g.map((row) => [...row]), cleared: 0, rows: [] };
+  rows.sort((a, b) => a - b);
+  return { grid: ng, cleared: rows.length, rows };
 }
+
+function findComponents(g: Grid): number[][][] {
+  const seen = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  const components: number[][][] = [];
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (g[r][c] === null || seen[r][c]) continue;
+      const stack = [[r, c]];
+      const cells: number[][] = [];
+      seen[r][c] = true;
+
+      while (stack.length) {
+        const [cr, cc] = stack.pop() as number[];
+        cells.push([cr, cc]);
+        for (const [dr, dc] of dirs) {
+          const nr = cr + dr;
+          const nc = cc + dc;
+          if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+          if (seen[nr][nc] || g[nr][nc] === null) continue;
+          seen[nr][nc] = true;
+          stack.push([nr, nc]);
+        }
+      }
+
+      components.push(cells);
+    }
+  }
+
+  return components;
+}
+
+function canComponentFall(g: Grid, cells: number[][]): boolean {
+  const own = new Set(cells.map(([r, c]) => `${r},${c}`));
+  for (const [r, c] of cells) {
+    if (r === ROWS - 1) return false;
+    if (!own.has(`${r + 1},${c}`) && g[r + 1][c] !== null) return false;
+  }
+  return true;
+}
+
+function applyCascadeGravity(g: Grid): Grid {
+  let current = g.map((row) => [...row]);
+
+  while (true) {
+    const components = findComponents(current);
+    const movable = components.map((cells) => canComponentFall(current, cells));
+    if (!movable.some(Boolean)) return current;
+
+    const next = emptyGrid();
+    components.forEach((cells, index) => {
+      const dy = movable[index] ? 1 : 0;
+      cells.forEach(([r, c]) => {
+        next[r + dy][c] = current[r][c];
+      });
+    });
+    current = next;
+  }
+}
+
 function ghostRow(g: Grid, p: Piece): number {
   let gr = p.row;
   while(valid(g, {...p, row:gr+1})) gr++;
   return gr;
 }
 
-// 개별 블록 중력: 빈 칸 위에 떠있는 블록을 아래로 떨어뜨림
-function applyGravity(g: Grid): Grid {
-  const ng: Grid = Array.from({length:ROWS},()=>Array(COLS).fill(null));
-  for (let c = 0; c < COLS; c++) {
-    // 각 열에서 블록을 모아서 바닥부터 채움
-    const blocks: number[] = [];
-    for (let r = ROWS - 1; r >= 0; r--) {
-      if (g[r][c] !== null) blocks.push(g[r][c] as number);
-    }
-    for (let i = 0; i < blocks.length; i++) {
-      ng[ROWS - 1 - i][c] = blocks[i];
-    }
-  }
-  return ng;
-}
-
 type Phase = "ready"|"playing"|"clearing"|"gameover"|"complete";
+type FailureReason = "stack" | "time" | null;
 
 interface GS {
   phase: Phase;
@@ -110,12 +193,18 @@ interface GS {
   pieces: number;
   level: number;
   clearFx: number[];
+  failureReason: FailureReason;
+  finalScore2500: number;
+  clearTimeMs: number;
 }
 
 function initGS(): GS {
   return {
     phase:"ready", grid:emptyGrid(), cur:mkPiece(), next:mkPiece(),
-    lines:0, score:0, combo:0, pieces:0, level:1, clearFx:[]
+    lines:0, score:ASSEMBLY_START_SCORE, combo:0, pieces:0, level:1, clearFx:[],
+    failureReason: null,
+    finalScore2500: 0,
+    clearTimeMs: 0,
   };
 }
 
@@ -129,14 +218,33 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
   // Game loop refs
   const rafRef = useRef(0);
   const lastDropRef = useRef(0);
+  const startedAtRef = useRef(0);
+  const lastHudSecondRef = useRef(Math.ceil(TIME_LIMIT_MS / 1000));
+  const lastDecayElapsedSecRef = useRef(0);
+  const completeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runningRef = useRef(false);
+  const [timeLeftMs, setTimeLeftMs] = useState(TIME_LIMIT_MS);
 
   const gs = gsRef.current;
 
   // --- Game actions (mutate gsRef directly, then render) ---
 
-  function dropSpeed() {
-    return Math.max(150, 600 - (gsRef.current.level - 1) * 80);
+  function dropSpeed(nowTs: number) {
+    const base = Math.max(150, 600 - (gsRef.current.level - 1) * 80);
+    if (!startedAtRef.current) return base;
+
+    const elapsedMs = Math.max(0, nowTs - startedAtRef.current);
+    if (elapsedMs <= SPEED_UP_START_MS) return base;
+
+    const speedupProgress = clamp(
+      (elapsedMs - SPEED_UP_START_MS) / Math.max(1, TIME_LIMIT_MS - SPEED_UP_START_MS),
+      0,
+      1
+    );
+    const stageBoost =
+      elapsedMs >= 90000 ? 0.12 : elapsedMs >= 70000 ? 0.08 : 0.04;
+    const speedMultiplier = (1 - MAX_TIME_SPEEDUP_RATIO * speedupProgress) * (1 - stageBoost);
+    return Math.max(70, Math.round(base * speedMultiplier));
   }
 
   function spawnNext(): boolean {
@@ -144,6 +252,11 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
     const np = g.next;
     if (!valid(g.grid, np)) {
       g.phase = "gameover";
+      g.failureReason = "stack";
+      if (completeTimeoutRef.current) {
+        clearTimeout(completeTimeoutRef.current);
+        completeTimeoutRef.current = null;
+      }
       stopLoop();
       stopBGM();
       sfxGameOver();
@@ -165,63 +278,64 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
     const finalP = {...p, row: gr};
     g.cur = finalP;
 
-    // 배치 (중력은 배치 시 적용하지 않음 - 일반 테트리스처럼 놓인 자리에 유지)
     const newGrid = place(g.grid, finalP);
+    let totalCleared = 0;
+    let finalGrid = newGrid;
+    let chain = clearRows(finalGrid);
 
-    // 줄 클리어 체크
-    const {grid: afterClear, cleared, rows: clearedRows} = clearRows(newGrid);
+    while (chain.cleared > 0) {
+      totalCleared += chain.cleared;
+      finalGrid = applyCascadeGravity(chain.grid);
+      chain = clearRows(finalGrid);
+    }
 
-    if (cleared > 0) {
-      // 줄 클리어 후 중력 적용 + 연쇄 클리어
-      let totalCleared = cleared;
-      let finalGrid = applyGravity(afterClear);
-      let chainResult = clearRows(finalGrid);
-      while (chainResult.cleared > 0) {
-        totalCleared += chainResult.cleared;
-        finalGrid = applyGravity(chainResult.grid);
-        chainResult = clearRows(finalGrid);
-      }
-      finalGrid = chainResult.grid;
-
+    if (totalCleared > 0) {
       sfxLineClear(totalCleared);
-      const lineScores = [0,100,300,500,800];
-      g.score += (lineScores[Math.min(totalCleared,4)]||totalCleared*200) * g.level;
       g.combo++;
       if (g.combo > 1) sfxCombo(g.combo);
       g.lines += totalCleared;
       g.level = Math.floor(g.lines/3)+1;
+      g.grid = finalGrid;
+      g.clearFx = [];
+      const lineBonus = LINE_CLEAR_BONUS[Math.min(4, totalCleared)] ?? 0;
+      g.score = clamp(g.score + lineBonus, 0, ASSEMBLY_STAGE_MAX_SCORE);
 
-      // Show clear effect
-      g.phase = "clearing";
-      g.grid = newGrid;
-      g.clearFx = clearedRows;
-      stopLoop();
-      render();
+      sfxPartAssembled();
 
-      const capturedFinalGrid = finalGrid;
-      setTimeout(()=>{
-        const g2 = gsRef.current;
-        g2.grid = capturedFinalGrid;
-        g2.clearFx = [];
+      if (g.lines >= GOAL_LINES) {
+        const clearTimeMs = Math.max(0, performance.now() - startedAtRef.current);
+        const remainingRatio = clamp((TIME_LIMIT_MS - clearTimeMs) / TIME_LIMIT_MS, 0, 1);
+        const speedBonus = Math.round(remainingRatio * SCORE_SPEED_CLEAR_BONUS_MAX);
+        const finalScore2500 = clamp(
+          Math.round(g.score + speedBonus),
+          0,
+          ASSEMBLY_STAGE_MAX_SCORE
+        );
+        const resultScore100 = Math.round(
+          (finalScore2500 / ASSEMBLY_STAGE_MAX_SCORE) * ASSEMBLY_RESULT_MAX_SCORE
+        );
 
-        sfxPartAssembled();
-
-        if (g2.lines >= GOAL_LINES) {
-          g2.phase = "complete";
-          stopBGM();
-          sfxComplete();
-          render();
-          const eff = Math.max(0, 100 - g2.pieces);
-          const fs = Math.min(100, Math.round(60 + eff * 0.4));
-          setTimeout(()=>onCompleteRef.current(fs), 2000);
-        } else {
-          g2.phase = "playing";
-          if (spawnNext()) {
-            startLoop();
-          }
-          render();
+        g.phase = "complete";
+        g.clearTimeMs = clearTimeMs;
+        g.finalScore2500 = finalScore2500;
+        g.score = finalScore2500;
+        stopBGM();
+        sfxComplete();
+        render();
+        if (completeTimeoutRef.current) {
+          clearTimeout(completeTimeoutRef.current);
+          completeTimeoutRef.current = null;
         }
-      }, 300);
+        completeTimeoutRef.current = setTimeout(() => {
+          completeTimeoutRef.current = null;
+          if (gsRef.current.phase !== "complete") return;
+          onCompleteRef.current(resultScore100);
+        }, 2000);
+      } else {
+        g.phase = "playing";
+        spawnNext();
+        render();
+      }
     } else {
       sfxLock();
       g.grid = newGrid;
@@ -283,8 +397,41 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
     const g = gsRef.current;
     if (g.phase !== "playing") { runningRef.current = false; return; }
 
+    const elapsedTotal = Math.max(0, timestamp - startedAtRef.current);
+    const elapsedSec = Math.floor(elapsedTotal / 1000);
+    if (elapsedSec > lastDecayElapsedSecRef.current) {
+      let decayTotal = 0;
+      for (let sec = lastDecayElapsedSecRef.current + 1; sec <= elapsedSec; sec++) {
+        decayTotal += getScoreDecayPerSec(sec);
+      }
+      g.score = clamp(g.score - decayTotal, 0, ASSEMBLY_STAGE_MAX_SCORE);
+      lastDecayElapsedSecRef.current = elapsedSec;
+    }
+
+    const remaining = Math.max(0, TIME_LIMIT_MS - elapsedTotal);
+    const remainingSec = Math.ceil(remaining / 1000);
+    if (remainingSec !== lastHudSecondRef.current) {
+      lastHudSecondRef.current = remainingSec;
+      setTimeLeftMs(remaining);
+    }
+
+    if (remaining <= 0) {
+      g.phase = "gameover";
+      g.failureReason = "time";
+      setTimeLeftMs(0);
+      if (completeTimeoutRef.current) {
+        clearTimeout(completeTimeoutRef.current);
+        completeTimeoutRef.current = null;
+      }
+      stopLoop();
+      stopBGM();
+      sfxGameOver();
+      render();
+      return;
+    }
+
     const elapsed = timestamp - lastDropRef.current;
-    if (elapsed >= dropSpeed()) {
+    if (elapsed >= dropSpeed(timestamp)) {
       lastDropRef.current = timestamp;
       moveDown();
     }
@@ -293,8 +440,13 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
   }
 
   function startLoop() {
+    const now = performance.now();
     runningRef.current = true;
-    lastDropRef.current = performance.now();
+    startedAtRef.current = now;
+    lastDropRef.current = now;
+    lastHudSecondRef.current = Math.ceil(TIME_LIMIT_MS / 1000);
+    lastDecayElapsedSecRef.current = 0;
+    setTimeLeftMs(TIME_LIMIT_MS);
     rafRef.current = requestAnimationFrame(gameLoop);
   }
 
@@ -304,16 +456,41 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
   }
 
   function startGame() {
+    if (completeTimeoutRef.current) {
+      clearTimeout(completeTimeoutRef.current);
+      completeTimeoutRef.current = null;
+    }
     gsRef.current = {...initGS(), phase: "playing"};
-    startBGM();
+    setTimeLeftMs(TIME_LIMIT_MS);
     render();
     startLoop();
   }
 
   // Cleanup
   useEffect(()=>{
-    return ()=>{ stopLoop(); stopBGM(); };
+    return ()=>{
+      stopLoop();
+      stopBGM();
+      if (completeTimeoutRef.current) {
+        clearTimeout(completeTimeoutRef.current);
+        completeTimeoutRef.current = null;
+      }
+    };
   },[]);
+
+  const {phase, grid, cur, next, lines, score, combo, pieces, clearFx, failureReason, clearTimeMs} = gs;
+  const remainingSeconds = Math.ceil(Math.max(0, timeLeftMs) / 1000);
+
+  useEffect(() => {
+    if (phase === "ready") {
+      startBGM({ source: tetrisReadyBgmTrack, volume: 0.56 });
+      return;
+    }
+
+    if (phase === "playing" || phase === "clearing" || phase === "gameover") {
+      startBGM({ source: tetrisBgmTrack, volume: 0.56 });
+    }
+  }, [phase]);
 
   // Keyboard
   useEffect(()=>{
@@ -332,7 +509,6 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
   },[]);
 
   // --- Render ---
-  const {phase, grid, cur, next, lines, score, combo, pieces, level, clearFx} = gs;
   const gr = phase === "playing" ? ghostRow(grid, cur) : cur.row;
 
   // Build display grid
@@ -361,7 +537,8 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
             <h3 style={{fontSize:24,color:"#5C3317",marginTop:8}}>테트리스 조립!</h3>
             <p style={{fontSize:14,color:"#8B4513",marginTop:8,lineHeight:1.8}}>
               블록을 쌓아서 줄을 완성하세요!<br/>
-              <strong style={{color:"#E8740C"}}>{GOAL_LINES}줄</strong>을 클리어하면<br/>딱따구리 조립 완료!
+              <strong style={{color:"#E8740C"}}>{GOAL_LINES}줄</strong>을 <strong style={{color:"#E8740C"}}>2분 안</strong>에 클리어하면 성공!<br/>
+              40초 이후부터 블록 속도가 조금씩 빨라집니다.
             </p>
             <div className="flex justify-center gap-2 mt-4 mb-4 flex-wrap">
               {SHAPES.map((shape,idx)=>(
@@ -390,8 +567,8 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
       {(phase==="playing"||phase==="clearing")&&(
         <>
           <div className="px-3 pt-3 pb-1 flex items-center justify-between">
-            <div><span style={{fontSize:10,color:"#8B4513"}}>SCORE</span><p style={{fontSize:18,color:"#5C3317"}}>{score.toLocaleString()}</p></div>
-            <div className="text-center"><span style={{fontSize:10,color:"#8B4513"}}>LEVEL</span><p style={{fontSize:18,color:"#E8740C"}}>{level}</p></div>
+            <div><span style={{fontSize:10,color:"#8B4513"}}>현재 점수</span><p style={{fontSize:18,color:"#5C3317"}}>{score} / {ASSEMBLY_STAGE_MAX_SCORE}</p></div>
+            <div className="text-center"><span style={{fontSize:10,color:"#8B4513"}}>남은 시간</span><p style={{fontSize:18,color:"#E8740C"}}>{remainingSeconds}s</p></div>
             <div className="text-right"><span style={{fontSize:10,color:"#8B4513"}}>COMBO</span><p style={{fontSize:18,color:combo>0?"#FF4444":"#5C3317"}}>{combo}x</p></div>
           </div>
 
@@ -511,10 +688,24 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
               style={{background:"rgba(255,248,220,0.95)",border:"3px solid #8B6914"}}
               initial={{scale:0}} animate={{scale:1}} transition={{type:"spring"}}>
               <motion.span style={{fontSize:50,display:"block"}} animate={{rotate:[0,-10,10,-10,0]}} transition={{duration:0.6,repeat:2}}>😵</motion.span>
-              <h3 style={{fontSize:22,color:"#5C3317",marginTop:8}}>블록이 가득 찼어요!</h3>
-              <p style={{fontSize:14,color:"#8B4513",marginTop:8}}>{lines}/{GOAL_LINES}줄 클리어</p>
+              <h3 style={{fontSize:22,color:"#5C3317",marginTop:8}}>
+                {failureReason === "time" ? "시간이 종료됐어요!" : "블록이 가득 찼어요!"}
+              </h3>
+              <p style={{fontSize:14,color:"#8B4513",marginTop:8}}>{lines}/{GOAL_LINES}줄 클리어 · 남은 시간 {remainingSeconds}s</p>
               <p style={{fontSize:13,color:"#FF4444",marginTop:4,lineHeight:1.6}}>
-                {GOAL_LINES}줄을 클리어해야<br/>다음 단계로 갈 수 있어요!
+                {failureReason === "time" ? (
+                  <>
+                    2분 제한 안에 클리어할수록
+                    <br />
+                    {ASSEMBLY_STAGE_MAX_SCORE}점에 가까워집니다!
+                  </>
+                ) : (
+                  <>
+                    {GOAL_LINES}줄을 2분 안에 클리어해야
+                    <br />
+                    다음 단계로 갈 수 있어요!
+                  </>
+                )}
               </p>
               <motion.button className="w-full py-4 rounded-xl text-white mt-5"
                 style={{background:"linear-gradient(180deg,#FF8C00,#E8740C)",border:"3px solid #B8560B",boxShadow:"0 4px 12px rgba(232,116,12,0.4)",fontSize:18}}
@@ -533,8 +724,15 @@ export function AssemblyGame({ onComplete }: AssemblyGameProps) {
             <motion.div className="text-center" initial={{scale:0,rotate:-10}} animate={{scale:1,rotate:0}} transition={{type:"spring",stiffness:200}}>
               <motion.span style={{fontSize:60}} animate={{rotate:[0,10,-10,0]}} transition={{duration:0.5,repeat:3}}>🎉</motion.span>
               <p style={{fontSize:26,color:"#5C3317",marginTop:8}}>조립 완료!</p>
-              <p style={{fontSize:15,color:"#8B4513",marginTop:4}}>{GOAL_LINES}줄 클리어! · {pieces}개 블록 사용</p>
-              <p style={{fontSize:18,color:"#E8740C",marginTop:4}}>점수: {score.toLocaleString()}</p>
+              <p style={{fontSize:15,color:"#8B4513",marginTop:4}}>
+                {GOAL_LINES}줄 클리어! · {pieces}개 블록 사용 · {(clearTimeMs / 1000).toFixed(1)}초
+              </p>
+              <p style={{fontSize:18,color:"#E8740C",marginTop:4}}>
+                최종 점수: {score.toLocaleString()} / {ASSEMBLY_STAGE_MAX_SCORE}
+              </p>
+              <p style={{fontSize:13,color:"#8B4513",marginTop:2}}>
+                리절트 전달 점수: {Math.round((score / ASSEMBLY_STAGE_MAX_SCORE) * ASSEMBLY_RESULT_MAX_SCORE)} / {ASSEMBLY_RESULT_MAX_SCORE}
+              </p>
             </motion.div>
           </motion.div>
         )}

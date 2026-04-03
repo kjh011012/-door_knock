@@ -3,11 +3,14 @@ import { motion, AnimatePresence } from "motion/react";
 
 interface OperationTestProps {
   onComplete: (score: number) => void;
-  balanceScore: number;
   hammerScore: number;
 }
 
-export function OperationTest({ onComplete, balanceScore, hammerScore }: OperationTestProps) {
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+export function OperationTest({ onComplete, hammerScore }: OperationTestProps) {
   const [knockCount, setKnockCount] = useState(0);
   const [isKnocking, setIsKnocking] = useState(false);
   const [doorShake, setDoorShake] = useState(false);
@@ -16,8 +19,8 @@ export function OperationTest({ onComplete, balanceScore, hammerScore }: Operati
   const [lastKnockTime, setLastKnockTime] = useState(0);
   const REQUIRED_KNOCKS = 8;
 
-  // Quality depends on previous scores
-  const quality = Math.round((balanceScore + hammerScore) / 2);
+  // 망치 스테이지 완성도가 높을수록 동작 테스트의 기본 품질이 올라간다.
+  const quality = clamp(Math.round(30 + hammerScore * 0.7), 0, 100);
   const isGood = quality >= 50;
 
   const handleDoorKnock = useCallback(() => {
