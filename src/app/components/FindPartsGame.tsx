@@ -77,6 +77,11 @@ interface DragState {
   minOffsetCells: number;
   maxOffsetCells: number;
 }
+interface SuggestedMove {
+  pieceId: string;
+  row: number;
+  col: number;
+}
 
 const GRID_SIZE = 6;
 const EXIT_ROW = 2;
@@ -85,6 +90,7 @@ const ROUND_SCORE_TARGET_MOVES = [10, 15, 20, 25, 26, 27] as const;
 const ROUND_TIME_LIMIT_MS = 60000;
 const ROUND_SCORE_MAX = 100;
 const FIND_PARTS_STAGE_MAX_SCORE = 2500;
+const EASY_HINT_IDLE_MS = 22000;
 type DifficultyTier = "easy1" | "easy2" | "mid1" | "mid2" | "hard1" | "hard2";
 type DifficultyMode = "easy" | "hell";
 interface DifficultyTuning {
@@ -435,30 +441,30 @@ function applyMove(
 }
 
 const EASY_TUNING: DifficultyTuning = {
-  roundOrder: ["easy1", "easy2", "mid1", "mid1", "mid2", "hard1"],
+  roundOrder: ["easy1", "easy2", "mid1", "mid2", "mid2", "mid2"],
   moveRanges: {
-    easy1: [5, 7],
-    easy2: [7, 10],
-    mid1: [10, 13],
-    mid2: [13, 16],
-    hard1: [15, 18],
-    hard2: [16, 19],
+    easy1: [4, 6],
+    easy2: [5, 8],
+    mid1: [7, 10],
+    mid2: [9, 12],
+    hard1: [11, 14],
+    hard2: [12, 15],
   },
   scrambleSettings: {
-    easy1: { base: 2, randomSpan: 7, attemptScale: 0.18 },
-    easy2: { base: 3, randomSpan: 10, attemptScale: 0.22 },
-    mid1: { base: 4, randomSpan: 14, attemptScale: 0.26 },
-    mid2: { base: 5, randomSpan: 16, attemptScale: 0.29 },
-    hard1: { base: 6, randomSpan: 18, attemptScale: 0.32 },
-    hard2: { base: 7, randomSpan: 20, attemptScale: 0.34 },
+    easy1: { base: 1, randomSpan: 5, attemptScale: 0.14 },
+    easy2: { base: 2, randomSpan: 7, attemptScale: 0.18 },
+    mid1: { base: 3, randomSpan: 10, attemptScale: 0.22 },
+    mid2: { base: 4, randomSpan: 12, attemptScale: 0.25 },
+    hard1: { base: 5, randomSpan: 14, attemptScale: 0.28 },
+    hard2: { base: 6, randomSpan: 16, attemptScale: 0.3 },
   },
   diversityTargets: {
-    easy1: 10,
-    easy2: 12,
-    mid1: 14,
-    mid2: 15,
-    hard1: 17,
-    hard2: 18,
+    easy1: 8,
+    easy2: 10,
+    mid1: 11,
+    mid2: 13,
+    hard1: 14,
+    hard2: 15,
   },
 };
 
@@ -1326,12 +1332,15 @@ function softenRoundForEasy(round: PuzzleRound, roundIndex: number): PuzzleRound
   let minMoves = solveMinMoves(pieces);
   if (minMoves <= 0) return { ...round, pieces, parMoves: round.parMoves };
 
-  const targetMovesByRound = [8, 11, 14, 17, 19, 21];
-  const maxRemovalsByRound = [1, 1, 0, 0, 0, 0];
+  const targetMovesByRound = [6, 8, 10, 12, 14, 15];
+  const maxRemovalsByRound = [2, 2, 1, 0, 0, 0];
+  const minMovesFloorByRound = [0, 0, 10, 12, 0, 0];
   const targetMoves =
     targetMovesByRound[clamp(roundIndex, 0, targetMovesByRound.length - 1)];
   const maxRemovals =
     maxRemovalsByRound[clamp(roundIndex, 0, maxRemovalsByRound.length - 1)];
+  const minMovesFloor =
+    minMovesFloorByRound[clamp(roundIndex, 0, minMovesFloorByRound.length - 1)];
 
   const removablePriority = ["f", "e", "d", "p", "c", "b", "a", "o"];
   let removedCount = 0;
@@ -1345,6 +1354,7 @@ function softenRoundForEasy(round: PuzzleRound, roundIndex: number): PuzzleRound
 
     const candidateMoves = solveMinMoves(candidate);
     if (candidateMoves < 1) continue;
+    if (candidateMoves < minMovesFloor) continue;
 
     pieces = candidate;
     minMoves = candidateMoves;
@@ -1360,6 +1370,34 @@ function softenRoundForEasy(round: PuzzleRound, roundIndex: number): PuzzleRound
     ...round,
     pieces,
     parMoves: easedParMoves,
+  };
+}
+
+function easeRoundAfterFail(round: PuzzleRound): PuzzleRound {
+  let bestPieces = clonePieces(round.pieces);
+  let bestMoves = solveMinMoves(bestPieces);
+  if (bestMoves <= 0) return round;
+
+  const removablePriority = ["f", "e", "d", "p", "c", "b", "a", "o"];
+  for (const pieceId of removablePriority) {
+    const exists = bestPieces.some((piece) => piece.id === pieceId && !piece.isTarget);
+    if (!exists) continue;
+
+    const candidate = bestPieces.filter((piece) => piece.id !== pieceId);
+    if (isSolved(candidate)) continue;
+    const candidateMoves = solveMinMoves(candidate);
+    if (candidateMoves < 1) continue;
+    if (candidateMoves >= bestMoves) continue;
+
+    bestPieces = candidate;
+    bestMoves = candidateMoves;
+    break;
+  }
+
+  return {
+    ...round,
+    pieces: bestPieces,
+    parMoves: bestMoves,
   };
 }
 
@@ -1390,10 +1428,18 @@ function rebalanceEarlyRoundOpening(
   roundIndex: number,
   rng: () => number
 ): PuzzleRound {
-  if (roundIndex !== 1 && roundIndex !== 2) return round;
+  const openingRuleByRound: Partial<
+    Record<number, { requiredDistance: number; requiredBlockers: number }>
+  > = {
+    1: { requiredDistance: 2, requiredBlockers: 1 }, // 2라운드
+    2: { requiredDistance: 2, requiredBlockers: 1 }, // 3라운드
+    3: { requiredDistance: 1, requiredBlockers: 1 }, // 4라운드
+    4: { requiredDistance: 1, requiredBlockers: 1 }, // 5라운드
+  };
+  const openingRule = openingRuleByRound[roundIndex];
+  if (!openingRule) return round;
 
-  const requiredDistance = 2;
-  const requiredBlockers = 1;
+  const { requiredDistance, requiredBlockers } = openingRule;
   const isAcceptable = (pieces: PuzzlePiece[]) => {
     const metrics = getTargetOpeningMetrics(pieces);
     return (
@@ -1459,9 +1505,54 @@ function getRoundTargetMoves(roundIdx: number): number {
   return ROUND_SCORE_TARGET_MOVES[clamp(roundIdx, 0, ROUND_SCORE_TARGET_MOVES.length - 1)];
 }
 
-function calculateRoundScore(moves: number, targetMoves: number): number {
+function calculateRoundScore(moves: number, targetMoves: number, overPenalty = 2): number {
   const over = Math.max(0, moves - targetMoves);
-  return clamp(ROUND_SCORE_MAX - over * 2, 0, ROUND_SCORE_MAX);
+  return clamp(ROUND_SCORE_MAX - over * overPenalty, 0, ROUND_SCORE_MAX);
+}
+
+function calculateRoundScoreByMode(
+  moves: number,
+  roundIdx: number,
+  mode: DifficultyMode
+): number {
+  const targetMoves = getRoundTargetMoves(roundIdx);
+  const overPenalty = mode === "easy" && roundIdx <= 1 ? 1 : 2;
+  return calculateRoundScore(moves, targetMoves, overPenalty);
+}
+
+function getBestNextMove(startPieces: PuzzlePiece[], maxStates = 90000): SuggestedMove | null {
+  if (isSolved(startPieces)) return null;
+
+  const queue: Array<{ pieces: PuzzlePiece[]; firstMove: SuggestedMove | null }> = [
+    { pieces: clonePieces(startPieces), firstMove: null },
+  ];
+  const visited = new Set<string>([encodeState(startPieces)]);
+  let cursor = 0;
+
+  while (cursor < queue.length && visited.size <= maxStates) {
+    const node = queue[cursor++];
+    for (const piece of node.pieces) {
+      const destinations = getSlideDestinations(node.pieces, piece.id);
+      for (const destination of destinations) {
+        const move: SuggestedMove = {
+          pieceId: piece.id,
+          row: destination.row,
+          col: destination.col,
+        };
+        const next = applyMove(node.pieces, move.pieceId, move.row, move.col);
+        const key = encodeState(next);
+        if (visited.has(key)) continue;
+
+        const firstMove = node.firstMove ?? move;
+        if (isSolved(next)) return firstMove;
+
+        visited.add(key);
+        queue.push({ pieces: next, firstMove });
+      }
+    }
+  }
+
+  return null;
 }
 
 function calculateFindPartsFinalScores(
@@ -1534,16 +1625,19 @@ export function FindPartsGame({
   const [roundScores, setRoundScores] = useState<number[]>([]);
   const [shakeBoard, setShakeBoard] = useState(false);
   const [roundTimeLeftMs, setRoundTimeLeftMs] = useState(ROUND_TIME_LIMIT_MS);
+  const [hintMove, setHintMove] = useState<SuggestedMove | null>(null);
 
   const boardRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const completeTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const roundTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const roundDeadlineRef = useRef<number | null>(null);
+  const lastMoveAtRef = useRef<number>(Date.now());
+  const hintShownForRoundRef = useRef<boolean>(false);
 
   const currentRound = rounds[roundIndex];
   const currentRoundTargetMoves = getRoundTargetMoves(roundIndex);
-  const currentRoundScore = calculateRoundScore(moveCount, currentRoundTargetMoves);
+  const currentRoundScore = calculateRoundScoreByMode(moveCount, roundIndex, difficultyMode);
   const roundTimeLeftSec = Math.max(0, Math.ceil(roundTimeLeftMs / 1000));
 
   useEffect(() => {
@@ -1553,7 +1647,10 @@ export function FindPartsGame({
     setSelectedPieceId(null);
     setDraggingPieceId(null);
     setDragOffsetPx(0);
+    setHintMove(null);
     dragRef.current = null;
+    lastMoveAtRef.current = Date.now();
+    hintShownForRoundRef.current = false;
   }, [currentRound]);
 
   useEffect(() => {
@@ -1611,6 +1708,31 @@ export function FindPartsGame({
     };
   }, [stopRoundTimer]);
 
+  useEffect(() => {
+    if (
+      phase !== "playing" ||
+      difficultyMode !== "easy" ||
+      roundIndex < 4 ||
+      !currentRound
+    ) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      if (hintShownForRoundRef.current) return;
+      const idleMs = Date.now() - lastMoveAtRef.current;
+      if (idleMs < EASY_HINT_IDLE_MS) return;
+
+      const suggested = getBestNextMove(pieces);
+      if (!suggested) return;
+
+      setHintMove(suggested);
+      hintShownForRoundRef.current = true;
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [currentRound, difficultyMode, phase, pieces, roundIndex]);
+
   const getCellSizePx = useCallback(() => {
     if (!boardRef.current) return 1;
     return boardRef.current.getBoundingClientRect().width / GRID_SIZE;
@@ -1626,11 +1748,14 @@ export function FindPartsGame({
     setLastReward(null);
     setRoundScores([]);
     setMoveCount(0);
+    setHintMove(null);
     setSelectedPieceId(null);
     setDraggingPieceId(null);
     setDragOffsetPx(0);
     setRoundTimeLeftMs(ROUND_TIME_LIMIT_MS);
     setPieces(clonePieces(session.rounds[0].pieces));
+    lastMoveAtRef.current = Date.now();
+    hintShownForRoundRef.current = false;
     setPhase("playing");
   }, [difficultyMode]);
 
@@ -1639,7 +1764,7 @@ export function FindPartsGame({
       if (!currentRound) return;
 
       const targetMoves = getRoundTargetMoves(roundIndex);
-      const roundScore = calculateRoundScore(nextMoveCount, targetMoves);
+      const roundScore = calculateRoundScoreByMode(nextMoveCount, roundIndex, difficultyMode);
       const reward =
         rewardOrder[roundIndex % rewardOrder.length] ??
         WOODPECKER_PARTS[roundIndex % WOODPECKER_PARTS.length];
@@ -1664,7 +1789,7 @@ export function FindPartsGame({
         setPhase("roundClear");
       }
     },
-    [currentRound, onComplete, rewardOrder, roundIndex, roundScores, rounds.length, stopRoundTimer]
+    [currentRound, difficultyMode, onComplete, rewardOrder, roundIndex, roundScores, rounds.length, stopRoundTimer]
   );
 
   const movePiece = useCallback(
@@ -1689,6 +1814,8 @@ export function FindPartsGame({
       const nextMoveCount = moveCount + 1;
       setPieces(nextPieces);
       setMoveCount(nextMoveCount);
+      setHintMove(null);
+      lastMoveAtRef.current = Date.now();
       sfxWoodBlockSlide();
 
       if (isSolved(nextPieces)) {
@@ -1794,15 +1921,27 @@ export function FindPartsGame({
   const retryCurrentRound = useCallback(() => {
     if (!currentRound) return;
     sfxButtonPress();
-    setPieces(clonePieces(currentRound.pieces));
+    const retryRound =
+      difficultyMode === "easy" ? easeRoundAfterFail(currentRound) : currentRound;
+    if (difficultyMode === "easy") {
+      setRounds((prev) => {
+        const next = [...prev];
+        next[roundIndex] = retryRound;
+        return next;
+      });
+    }
+    setPieces(clonePieces(retryRound.pieces));
     setMoveCount(0);
+    setHintMove(null);
     setSelectedPieceId(null);
     setDraggingPieceId(null);
     setDragOffsetPx(0);
     dragRef.current = null;
     setRoundTimeLeftMs(ROUND_TIME_LIMIT_MS);
+    lastMoveAtRef.current = Date.now();
+    hintShownForRoundRef.current = false;
     setPhase("playing");
-  }, [currentRound]);
+  }, [currentRound, difficultyMode, roundIndex]);
 
   const cellPercent = 100 / GRID_SIZE;
 
@@ -1994,6 +2133,7 @@ export function FindPartsGame({
                 const widthCells = piece.axis === "h" ? piece.len : 1;
                 const heightCells = piece.axis === "v" ? piece.len : 1;
                 const active = selectedPieceId === piece.id;
+                const hinted = hintMove?.pieceId === piece.id;
                 const dragging = draggingPieceId === piece.id;
                 const dragOffsetX = dragging && piece.axis === "h" ? dragOffsetPx : 0;
                 const dragOffsetY = dragging && piece.axis === "v" ? dragOffsetPx : 0;
@@ -2013,11 +2153,13 @@ export function FindPartsGame({
                       backgroundRepeat: "no-repeat",
                       border: piece.isTarget
                         ? "3px solid #FAD26C"
-                        : active
+                        : active || hinted
                           ? "3px solid #FFD46C"
                           : "3px solid #5C3317",
                       boxShadow: active
                         ? "0 0 0 3px rgba(255,212,108,0.35)"
+                        : hinted
+                          ? "0 0 0 3px rgba(255,212,108,0.3), 0 0 16px rgba(255,212,108,0.75)"
                         : "0 3px 8px rgba(0,0,0,0.2)",
                       zIndex: piece.isTarget ? 40 : active ? 35 : 20,
                       transition: dragging
@@ -2073,6 +2215,14 @@ export function FindPartsGame({
               블록을 누른 채로 밀어서 이동시키세요.
               <br />
               길을 뚫어 랜덤 박스를 출구로 탈출시키면 보상이 열립니다.
+              {hintMove && (
+                <>
+                  <br />
+                  <span style={{ color: "#B8560B" }}>
+                    힌트: 반짝이는 블록을 먼저 움직여보세요.
+                  </span>
+                </>
+              )}
             </p>
           </div>
         )}
@@ -2163,7 +2313,7 @@ export function FindPartsGame({
               {currentRound && (
                 <p style={{ fontSize: 14, color: "#2E5A2E", marginTop: 6 }}>
                   {moveCount}회 이동 · 점수{" "}
-                  {calculateRoundScore(moveCount, currentRoundTargetMoves)}점
+                  {calculateRoundScoreByMode(moveCount, roundIndex, difficultyMode)}점
                 </p>
               )}
               <motion.button
