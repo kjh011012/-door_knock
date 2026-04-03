@@ -305,7 +305,7 @@ const ROUND_POOLS: Record<DifficultyTier, Array<Omit<PuzzleRound, "id">>> = {
   ],
 };
 
-const TOTAL_ROUNDS = HELL_TUNING.roundOrder.length;
+const TOTAL_ROUNDS = 6;
 const BLOCK_TEXTURES = [
   blockTexture0,
   blockTexture1,
