@@ -196,6 +196,7 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
   const effectIdRef = useRef(0);
   const flashIdRef = useRef(0);
   const endGuardRef = useRef(false);
+  const lastUiTickRef = useRef(0);
 
   const accuracy = useMemo(() => calculateAccuracyPercent(notes), [notes]);
 
@@ -455,6 +456,7 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
       setLaneEnergy([0, 0, 0]);
       setCameraKick({ x: 0, y: 0, scale: 1 });
       setScreenFlash(null);
+      lastUiTickRef.current = 0;
 
       setPhase("countdown");
       setCountdown(3);
@@ -480,8 +482,11 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
               if (endGuardRef.current) return;
 
               const elapsed = audio.currentTime * 1000;
-              setTimelineMs(elapsed);
-              setProgress(clamp((elapsed / durationMs) * 100, 0, 100));
+              if (elapsed - lastUiTickRef.current >= 16) {
+                lastUiTickRef.current = elapsed;
+                setTimelineMs(elapsed);
+                setProgress(clamp((elapsed / durationMs) * 100, 0, 100));
+              }
 
               let changed = false;
               let newlyMissed = 0;
@@ -815,7 +820,7 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
               if (yPercent < -12 || yPercent > 100) return null;
 
               return (
-                <motion.div
+                <div
                   key={note.id}
                   className="absolute flex items-center justify-center"
                   style={{
@@ -823,9 +828,8 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
                     top: `${yPercent}%`,
                     width: "29%",
                     height: 44,
+                    willChange: "transform",
                   }}
-                  animate={{ scale: [0.94, 1.06, 0.94], rotate: [0, -1.4, 1.4, 0] }}
-                  transition={{ duration: 0.38, repeat: Infinity, delay: (note.id % 5) * 0.03 }}
                 >
                   <div
                     className="relative w-full h-full rounded-xl flex items-center justify-center overflow-hidden"
@@ -848,7 +852,7 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
                     />
                     <span style={{ fontSize: 20 }}>{LANE_EMOJIS[note.lane]}</span>
                   </div>
-                </motion.div>
+                </div>
               );
             })}
 

@@ -334,7 +334,7 @@ function WorkbenchScreen({ onStart }: { onStart: () => void }) {
               src={part.image}
               alt={part.name}
               style={{
-                width: part.bench.width,
+                width: Math.round(part.bench.width * 0.72),
                 height: "auto",
                 filter: "drop-shadow(0 8px 12px rgba(92,51,23,0.18))",
                 pointerEvents: "none",

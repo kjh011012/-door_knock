@@ -696,7 +696,10 @@ export function CustomizeScreen({ onComplete, soundOn }: CustomizeScreenProps) {
         </motion.div>
       </div>
 
-      <div className="px-4 pb-5 pt-3">
+      <div
+        className="px-4 pt-3 shrink-0"
+        style={{ paddingBottom: "max(16px, calc(env(safe-area-inset-bottom) + 10px))" }}
+      >
         <motion.button
           className="w-full py-4 rounded-xl text-white"
           style={{
