@@ -88,11 +88,11 @@ type DifficultyTier = "easy1" | "easy2" | "mid1" | "mid2" | "hard1" | "hard2";
 
 const ROUND_DIFFICULTY_ORDER: DifficultyTier[] = [
   "easy1",
+  "easy1",
+  "easy2",
   "easy2",
   "mid1",
-  "mid2",
-  "hard1",
-  "hard2",
+  "mid1",
 ];
 
 const ROUND_POOLS: Record<DifficultyTier, Array<Omit<PuzzleRound, "id">>> = {
@@ -436,33 +436,33 @@ function applyMove(
 }
 
 const TIER_MOVE_RANGES: Record<DifficultyTier, [number, number]> = {
-  easy1: [4, 6],
-  easy2: [6, 8],
-  mid1: [13, 16],
-  mid2: [15, 18],
-  hard1: [17, 20],
-  hard2: [19, 22],
+  easy1: [3, 5],
+  easy2: [5, 7],
+  mid1: [8, 10],
+  mid2: [10, 12],
+  hard1: [11, 13],
+  hard2: [12, 14],
 };
 
 const TIER_SCRAMBLE_SETTINGS: Record<
   DifficultyTier,
   { base: number; randomSpan: number; attemptScale: number }
 > = {
-  easy1: { base: 1, randomSpan: 6, attemptScale: 0.18 },
-  easy2: { base: 2, randomSpan: 8, attemptScale: 0.22 },
-  mid1: { base: 5, randomSpan: 18, attemptScale: 0.28 },
-  mid2: { base: 6, randomSpan: 20, attemptScale: 0.31 },
-  hard1: { base: 7, randomSpan: 22, attemptScale: 0.34 },
-  hard2: { base: 8, randomSpan: 24, attemptScale: 0.37 },
+  easy1: { base: 1, randomSpan: 4, attemptScale: 0.12 },
+  easy2: { base: 1, randomSpan: 6, attemptScale: 0.16 },
+  mid1: { base: 3, randomSpan: 10, attemptScale: 0.2 },
+  mid2: { base: 4, randomSpan: 12, attemptScale: 0.24 },
+  hard1: { base: 5, randomSpan: 13, attemptScale: 0.26 },
+  hard2: { base: 6, randomSpan: 14, attemptScale: 0.28 },
 };
 
 const TIER_DIVERSITY_TARGETS: Record<DifficultyTier, number> = {
-  easy1: 10,
-  easy2: 12,
-  mid1: 14,
-  mid2: 16,
-  hard1: 18,
-  hard2: 20,
+  easy1: 8,
+  easy2: 10,
+  mid1: 12,
+  mid2: 13,
+  hard1: 14,
+  hard2: 15,
 };
 
 const TIER_VARIATION_REQUIREMENTS: Record<
