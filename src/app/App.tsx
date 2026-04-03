@@ -328,8 +328,7 @@ export default function App() {
             >
               <h3 style={{ fontSize: 22, color: "#5C3317", textAlign: "center" }}>나이 입력</h3>
               <p style={{ fontSize: 13, color: "#7A4A25", marginTop: 6, textAlign: "center", lineHeight: 1.55 }}>
-                15세 이하는 <strong>easy 모드</strong>,<br />
-                16세 이상은 <strong>hell 모드</strong>로 시작해요.
+                나이를 입력하고 시작 버튼을 눌러주세요.
               </p>
 
               <input
