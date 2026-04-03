@@ -45,15 +45,16 @@ const NOTE_TRAVEL_MS = 1900;
 const SONG_PADDING_END_MS = 700;
 const RHYTHM_STAGE_MAX_SCORE = 2500;
 const RHYTHM_RESULT_MAX_SCORE = 100;
-const MISTAP_DEDUCTION = 50;
-const NOTE_MISS_DEDUCTION = 35;
+const MISTAP_DEDUCTION = 10;
+const NOTE_MISS_DEDUCTION = 10;
 const INPUT_TIMING_OFFSET_MS = 35;
 const LATE_HIT_BONUS_WINDOW_MS = 80;
 const JUDGE_GAIN_SCORES: Record<Exclude<HitJudge, "MISS">, number> = {
-  PERFECT: 14,
-  GREAT: 10,
-  GOOD: 6,
+  PERFECT: 50,
+  GREAT: 40,
+  GOOD: 30,
 };
+const COMBO_BONUS_MULTIPLIER = 1.5;
 
 const JUDGE_ACCURACY_SCORES: Record<HitJudge, number> = {
   PERFECT: 100,
@@ -432,7 +433,9 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
         setEffects((prev) => prev.filter((effect) => effect.id !== effectId));
       });
       triggerImpactFX(lane, judge);
-      applyScoreDelta(JUDGE_GAIN_SCORES[judge]);
+      const baseGain = JUDGE_GAIN_SCORES[judge];
+      const gained = nextCombo >= 2 ? Math.round(baseGain * COMBO_BONUS_MULTIPLIER) : baseGain;
+      applyScoreDelta(gained);
     },
     [phase, scheduleCountdownTimer, triggerImpactFX, applyScoreDelta]
   );
