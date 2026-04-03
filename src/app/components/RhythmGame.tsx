@@ -47,6 +47,8 @@ const RHYTHM_STAGE_MAX_SCORE = 2500;
 const RHYTHM_RESULT_MAX_SCORE = 100;
 const MISTAP_DEDUCTION = 50;
 const NOTE_MISS_DEDUCTION = 35;
+const INPUT_TIMING_OFFSET_MS = 35;
+const LATE_HIT_BONUS_WINDOW_MS = 80;
 
 const JUDGE_ACCURACY_SCORES: Record<HitJudge, number> = {
   PERFECT: 100,
@@ -363,7 +365,7 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
         });
       });
 
-      const elapsed = audio.currentTime * 1000;
+      const elapsed = audio.currentTime * 1000 - INPUT_TIMING_OFFSET_MS;
       let bestIndex = -1;
       let bestDiff = Number.POSITIVE_INFINITY;
 
@@ -371,8 +373,12 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
         const note = notesRef.current[i];
         if (note.lane !== lane || note.hit || note.missed) continue;
 
-        const diff = Math.abs(elapsed - note.time);
-        if (diff <= HIT_WINDOW_MS.GOOD && diff < bestDiff) {
+        const delta = elapsed - note.time;
+        const inEarlyWindow = delta >= -HIT_WINDOW_MS.GOOD;
+        const inLateWindow = delta <= HIT_WINDOW_MS.GOOD + LATE_HIT_BONUS_WINDOW_MS;
+        const diff = Math.abs(delta);
+
+        if (inEarlyWindow && inLateWindow && diff < bestDiff) {
           bestDiff = diff;
           bestIndex = i;
         }
@@ -491,9 +497,11 @@ export function RhythmGame({ onComplete }: RhythmGameProps) {
               let changed = false;
               let newlyMissed = 0;
               const missedLanes: number[] = [];
+              const missCutoff =
+                elapsed - INPUT_TIMING_OFFSET_MS - HIT_WINDOW_MS.GOOD - LATE_HIT_BONUS_WINDOW_MS;
               const updated = notesRef.current.map((note) => {
                 if (note.hit || note.missed) return note;
-                if (elapsed > note.time + HIT_WINDOW_MS.GOOD) {
+                if (missCutoff > note.time) {
                   changed = true;
                   newlyMissed++;
                   missedLanes.push(note.lane);
